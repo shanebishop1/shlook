@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shlook",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+  "account_id": "ca9ee30a816f2f92657c7e6b3b595ee2",
+  "workers_dev": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shlook",
+      "database_id": "db73f411-c665-40f5-b30c-84c8481a9dd9",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "shlook-assets",
+    },
+  ],
+}

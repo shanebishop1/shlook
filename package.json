@@ -1,0 +1,35 @@
+{
+  "name": "shlook",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private-by-default artifact hosting for agents",
+  "license": "MIT",
+  "author": "Shane Bishop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shanebishop1/shlook.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir /tmp/shlook-worker",
+    "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test",
+    "ci": "pnpm check && pnpm build",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit --strict --skipLibCheck --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types @cloudflare/workers-types src/index.ts src/index.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260818.1",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.124.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.17.0"
+}
