@@ -18,15 +18,16 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint src",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit --strict --skipLibCheck --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types @cloudflare/workers-types src/index.ts src/index.test.ts"
+    "typecheck": "tsc --noEmit --strict --skipLibCheck --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types @cloudflare/workers-types,@cloudflare/vitest-plugin/types src/index.ts src/request.ts src/index.test.ts test/env.d.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260818.1",
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "@cloudflare/workers-types": "5.20260825.1",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "wrangler": "4.124.0"
+    "wrangler": "4.126.0"
   },
   "engines": {
     "node": ">=24"

@@ -19,8 +19,20 @@ checking, strict TypeScript checking, tests, and a Wrangler dry-run build.
 ## Architecture
 
 One Cloudflare Worker owns the API and artifact-serving routes. One D1 database
-stores metadata and lifecycle state; one private R2 bucket stores bytes. The
-bootstrap exposes only `/health`; publication behavior lands in later gates.
+stores metadata and lifecycle state; one private R2 bucket stores bytes. The E1
+runtime supports private asset creation, file upload, manifest finalization,
+inspection, archive listing, latest/direct views, and exact-one-asset deletion.
+Uploads remain hidden until every manifest file is durable and the asset enters
+the `live` state.
+
+Current API routes:
+
+- `POST /api/assets` creates an uploading asset.
+- `PUT /api/assets/:id/files/:path` uploads one regular file.
+- `POST /api/assets/:id/finalize` validates `{ entrypoint, files }` and publishes.
+- `GET /api/assets?offset=<n>` and `GET /api/assets/:id` page and inspect assets.
+- `GET /latest` and `GET /assets/:id/` serve live content.
+- `DELETE /api/assets/:id` deletes one asset and its scoped objects.
 
 Planned host boundaries:
 
