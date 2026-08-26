@@ -91,11 +91,13 @@ async function liveUpdate(
   sql: string,
   values: (string | null)[],
   id: string,
+  condition = "",
 ): Promise<boolean> {
   const result = await db
     .prepare(
       `${sql} WHERE id = ? AND state = 'live' AND ` +
-        "(hard_expires_at IS NULL OR hard_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "(hard_expires_at IS NULL OR hard_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))" +
+        condition,
     )
     .bind(...values, id)
     .run();
@@ -111,15 +113,36 @@ export async function handlePrivacyMutation(
   if (asset.state !== "live") return json({ error: "asset_not_live" }, 409);
 
   if (operation === "secret" && request.method === "POST") {
+    const mode = new URL(request.url).searchParams.get("mode");
+    if (mode !== null && mode !== "create" && mode !== "rotate") {
+      return json({ error: "invalid_secret_mode" }, 400);
+    }
+    if (mode === "create" && asset.secret_hash !== null) {
+      return json({ error: "secret_exists" }, 409);
+    }
+    if (mode === "rotate" && asset.secret_hash === null) {
+      return json({ error: "secret_missing" }, 409);
+    }
     const secret = issueSecret();
     const hash = await hashSecret(secret);
+    const condition =
+      mode === "create"
+        ? " AND secret_hash IS NULL"
+        : mode === "rotate"
+          ? " AND secret_hash IS NOT NULL"
+          : "";
     const updated = await liveUpdate(
       db,
       "UPDATE assets SET secret_hash = ?, visibility = 'secret_link', updated_at = ?",
       [hash, new Date().toISOString()],
       asset.id,
+      condition,
     );
-    if (!updated) return json({ error: "asset_not_live" }, 409);
+    if (!updated) {
+      if (mode === "create") return json({ error: "secret_exists" }, 409);
+      if (mode === "rotate") return json({ error: "secret_missing" }, 409);
+      return json({ error: "asset_not_live" }, 409);
+    }
     return json({ secret, url: `https://${SHARE_HOST}/s/${secret}/assets/${asset.id}/` });
   }
   if (operation === "secret" && request.method === "DELETE") {

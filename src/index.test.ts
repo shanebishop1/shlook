@@ -363,7 +363,7 @@ describe("privacy and lifecycle", () => {
 
   it("stores only a hash and serves a newly issued secret capability", async () => {
     const asset = await createLiveAsset("secret");
-    const issued = await request(`/api/assets/${asset.id}/secret`, { method: "POST" });
+    const issued = await request(`/api/assets/${asset.id}/secret?mode=create`, { method: "POST" });
     const body = (await issued.json()) as { secret: string; url: string };
     const row = await env.DB.prepare("SELECT secret_hash FROM assets WHERE id = ?")
       .bind(asset.id)
@@ -383,10 +383,13 @@ describe("privacy and lifecycle", () => {
   it("rotates and revokes secret capabilities", async () => {
     const asset = await createLiveAsset("secret");
     const first = (await (
-      await request(`/api/assets/${asset.id}/secret`, { method: "POST" })
+      await request(`/api/assets/${asset.id}/secret?mode=create`, { method: "POST" })
     ).json()) as { url: string };
+    expect(
+      (await request(`/api/assets/${asset.id}/secret?mode=create`, { method: "POST" })).status,
+    ).toBe(409);
     const second = (await (
-      await request(`/api/assets/${asset.id}/secret`, { method: "POST" })
+      await request(`/api/assets/${asset.id}/secret?mode=rotate`, { method: "POST" })
     ).json()) as { url: string };
 
     expect(
