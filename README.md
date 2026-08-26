@@ -31,6 +31,8 @@ Current API routes:
 - `PUT /api/assets/:id/files/:path` uploads one regular file.
 - `POST /api/assets/:id/finalize` validates `{ entrypoint, files }` and publishes.
 - `GET /api/assets?offset=<n>` and `GET /api/assets/:id` page and inspect assets.
+- `PATCH /api/assets/:id/visibility` and `/expiry` control sharing and lifecycle.
+- `POST` or `DELETE /api/assets/:id/secret` rotates or revokes a capability URL.
 - `GET /latest` and `GET /assets/:id/` serve live content.
 - `DELETE /api/assets/:id` deletes one asset and its scoped objects.
 
@@ -39,6 +41,9 @@ Planned host boundaries:
 - `show.shane-bishop.com`: owner UI and agent API behind Cloudflare Access.
 - `private.show.shane-bishop.com`: owner-authenticated private artifacts.
 - `share.shane-bishop.com`: explicitly public or secret-link artifacts.
+
+The Worker rejects unknown hosts. Owner/private requests require verified
+Cloudflare Access context; artifact HTML is sandboxed away from the owner API.
 
 See `docs/project.md` for operational boundaries and gate status.
 

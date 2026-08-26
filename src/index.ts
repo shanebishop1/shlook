@@ -1,3 +1,24 @@
+import {
+  assetIdPattern,
+  assetPrefix,
+  artifactHeaders,
+  decodePath,
+  manifestKey,
+  readManifest,
+  uploadKey,
+  validateManifest,
+} from "./artifact";
+import { cleanupAssetPage, cleanupExpired, deleteAsset } from "./cleanup";
+import {
+  artifactAccess,
+  assetJson,
+  handlePrivacyMutation,
+  hasOwnerAccess,
+  isPast,
+  OWNER_HOST,
+  PRIVATE_HOST,
+  SHARE_HOST,
+} from "./privacy";
 import { readJsonWithin } from "./request";
 
 export interface Env {
@@ -6,9 +27,10 @@ export interface Env {
 }
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
-const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const assetColumns =
-  "id, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, created_at, updated_at";
+  "id, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, " +
+  "secret_hash, share_expires_at, hard_expires_at, cleanup_pending, cleanup_checked_at, " +
+  "created_at, updated_at";
 const maxUploads = 500;
 const finalizeLeaseMilliseconds = 5 * 60 * 1000;
 
@@ -20,19 +42,13 @@ interface AssetRow {
   finalize_token: string | null;
   finalize_started_at: string | null;
   manifest_id: string | null;
+  secret_hash: string | null;
+  share_expires_at: string | null;
+  hard_expires_at: string | null;
+  cleanup_pending: number;
+  cleanup_checked_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface Manifest {
-  version: 1;
-  entrypoint: string;
-  files: ManifestFile[];
-}
-
-interface ManifestFile {
-  path: string;
-  uploadId: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -41,56 +57,6 @@ function json(data: unknown, status = 200): Response {
 
 function error(code: string, status: number): Response {
   return json({ error: code }, status);
-}
-
-function assetJson(row: AssetRow) {
-  return {
-    id: row.id,
-    state: row.state,
-    visibility: row.visibility,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function decodePath(encodedPath: string): string | null {
-  try {
-    return safePath(decodeURIComponent(encodedPath));
-  } catch {
-    return null;
-  }
-}
-
-function safePath(path: string): string | null {
-  if (
-    path.length === 0 ||
-    path.length > 1024 ||
-    path.startsWith("/") ||
-    path.includes("\\") ||
-    Array.from(path).some((character) => {
-      const code = character.charCodeAt(0);
-      return code < 32 || code === 127;
-    })
-  ) {
-    return null;
-  }
-
-  const segments = path.split("/");
-  return segments.some((segment) => segment === "" || segment === "." || segment === "..")
-    ? null
-    : path;
-}
-
-function assetPrefix(id: string): string {
-  return `assets/${id}/`;
-}
-
-function uploadKey(id: string, uploadId: string): string {
-  return `${assetPrefix(id)}uploads/${uploadId}`;
-}
-
-function manifestKey(id: string, manifestId: string): string {
-  return `${assetPrefix(id)}manifests/${manifestId}.json`;
 }
 
 async function findAsset(env: Env, id: string): Promise<AssetRow | null> {
@@ -102,49 +68,11 @@ async function findAsset(env: Env, id: string): Promise<AssetRow | null> {
 async function latestAsset(env: Env): Promise<AssetRow | null> {
   return env.DB.prepare(
     `SELECT ${assetColumns} FROM assets ` +
-      "WHERE state = 'live' ORDER BY created_at DESC, id DESC LIMIT 1",
-  ).first<AssetRow>();
-}
-
-function validateManifest(value: unknown): Manifest | null {
-  if (typeof value !== "object" || value === null) return null;
-
-  const input = value as { entrypoint?: unknown; files?: unknown };
-  if (typeof input.entrypoint !== "string" || !Array.isArray(input.files)) return null;
-  if (input.files.length === 0 || input.files.length > maxUploads) return null;
-
-  const entrypoint = safePath(input.entrypoint);
-  const files = input.files.map((file): ManifestFile | null => {
-    if (typeof file !== "object" || file === null) return null;
-    const candidate = file as { path?: unknown; uploadId?: unknown };
-    if (typeof candidate.path !== "string" || typeof candidate.uploadId !== "string") return null;
-    const path = safePath(candidate.path);
-    return path === null || !assetIdPattern.test(candidate.uploadId)
-      ? null
-      : { path, uploadId: candidate.uploadId };
-  });
-  if (entrypoint === null || files.some((file) => file === null)) return null;
-
-  const validFiles = files as ManifestFile[];
-  if (
-    new Set(validFiles.map((file) => file.path)).size !== validFiles.length ||
-    new Set(validFiles.map((file) => file.uploadId)).size !== validFiles.length ||
-    !validFiles.some((file) => file.path === entrypoint)
-  ) {
-    return null;
-  }
-  return { version: 1, entrypoint, files: validFiles };
-}
-
-async function readManifest(env: Env, id: string, manifestId: string): Promise<Manifest | null> {
-  const object = await env.ASSETS.get(manifestKey(id, manifestId));
-  if (object === null) return null;
-
-  try {
-    return validateManifest(await object.json<unknown>());
-  } catch {
-    return null;
-  }
+      "WHERE state = 'live' AND (hard_expires_at IS NULL OR hard_expires_at > ?) " +
+      "ORDER BY created_at DESC, id DESC LIMIT 1",
+  )
+    .bind(new Date().toISOString())
+    .first<AssetRow>();
 }
 
 async function createAsset(env: Env): Promise<Response> {
@@ -166,9 +94,14 @@ async function createAsset(env: Env): Promise<Response> {
         finalize_token: null,
         finalize_started_at: null,
         manifest_id: null,
+        secret_hash: null,
+        share_expires_at: null,
+        hard_expires_at: null,
+        cleanup_pending: 0,
+        cleanup_checked_at: null,
         created_at: now,
         updated_at: now,
-      }),
+      } as AssetRow),
     },
     201,
   );
@@ -179,9 +112,10 @@ async function listAssets(request: Request, env: Env): Promise<Response> {
   if (!Number.isSafeInteger(offset) || offset < 0) return error("invalid_offset", 400);
   const { results } = await env.DB.prepare(
     `SELECT ${assetColumns} FROM assets ` +
-      "WHERE state = 'live' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+      "WHERE state = 'live' AND (hard_expires_at IS NULL OR hard_expires_at > ?) " +
+      "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
   )
-    .bind(100, offset)
+    .bind(new Date().toISOString(), 100, offset)
     .all<AssetRow>();
   return json({
     assets: results.map(assetJson),
@@ -191,9 +125,12 @@ async function listAssets(request: Request, env: Env): Promise<Response> {
 
 async function inspectAsset(env: Env, id: string): Promise<Response> {
   const asset = await findAsset(env, id);
-  return asset === null || asset.state === "deleted"
-    ? error("not_found", 404)
-    : json({ asset: assetJson(asset) });
+  if (asset === null || asset.state === "deleted") return error("not_found", 404);
+  if (isPast(asset.hard_expires_at)) {
+    await deleteAsset(env, id);
+    return error("not_found", 404);
+  }
+  return json({ asset: assetJson(asset) });
 }
 
 async function uploadFile(
@@ -351,7 +288,7 @@ async function serveAsset(env: Env, asset: AssetRow, encodedPath: string): Promi
   if (asset.state !== "live") return error("not_found", 404);
 
   if (asset.manifest_id === null) return error("not_found", 404);
-  const manifest = await readManifest(env, asset.id, asset.manifest_id);
+  const manifest = await readManifest(env.ASSETS, asset.id, asset.manifest_id);
   if (manifest === null) return error("not_found", 404);
 
   const path = encodedPath === "" ? manifest.entrypoint : decodePath(encodedPath);
@@ -361,37 +298,73 @@ async function serveAsset(env: Env, asset: AssetRow, encodedPath: string): Promi
   const object = await env.ASSETS.get(uploadKey(asset.id, file.uploadId));
   if (object === null) return error("not_found", 404);
 
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "private, no-store");
-  headers.set("x-content-type-options", "nosniff");
-  return new Response(object.body, { headers });
+  return new Response(object.body, { headers: artifactHeaders(object) });
 }
 
-async function deleteAsset(env: Env, id: string): Promise<Response> {
-  const asset = await findAsset(env, id);
-  if (asset === null) return error("not_found", 404);
-
-  if (asset.state !== "deleted") {
-    await env.DB.prepare(
-      "UPDATE assets SET state = 'deleted', finalize_token = NULL, finalize_started_at = NULL, " +
-        "updated_at = ? WHERE id = ?",
-    )
-      .bind(new Date().toISOString(), id)
-      .run();
+async function serveWithPolicy(
+  env: Env,
+  asset: AssetRow | null,
+  path: string,
+  mode: "private" | "public" | "secret",
+  secret?: string,
+): Promise<Response> {
+  if (asset === null || asset.state !== "live") return error("not_found", 404);
+  const access = await artifactAccess(asset, mode, secret);
+  if (access === "hard_expired") {
+    await deleteAsset(env, asset.id);
+    return error("not_found", 404);
   }
-
-  while (true) {
-    const page = await env.ASSETS.list({ prefix: assetPrefix(id), limit: 1000 });
-    if (page.objects.length === 0) break;
-    await env.ASSETS.delete(page.objects.map((object) => object.key));
-  }
-  return new Response(null, { status: 204 });
+  return access === "allow" ? serveAsset(env, asset, path) : error("not_found", 404);
 }
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(
+  request: Request,
+  env: Env,
+  ctx?: Pick<ExecutionContext, "access">,
+): Promise<Response> {
   const url = new URL(request.url);
+  const host = url.hostname;
+  if (![OWNER_HOST, PRIVATE_HOST, SHARE_HOST].includes(host)) return error("not_found", 404);
+  if (host !== SHARE_HOST && !(await hasOwnerAccess(ctx))) return error("access_required", 403);
+
+  if (host === PRIVATE_HOST) {
+    const latest = url.pathname.match(/^\/latest(?:\/(.*))?$/);
+    if (request.method === "GET" && latest !== null)
+      return serveWithPolicy(env, await latestAsset(env), latest[1] ?? "", "private");
+    const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
+    if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
+      return serveWithPolicy(env, await findAsset(env, direct[1]), direct[2] ?? "", "private");
+    return error("not_found", 404);
+  }
+
+  if (host === SHARE_HOST) {
+    const secret = url.pathname.match(/^\/s\/([^/]+)\/assets\/([^/]+)(?:\/(.*))?$/);
+    if (
+      request.method === "GET" &&
+      secret !== null &&
+      /^[A-Za-z0-9_-]{43}$/.test(secret[1]) &&
+      assetIdPattern.test(secret[2])
+    )
+      return serveWithPolicy(
+        env,
+        await findAsset(env, secret[2]),
+        secret[3] ?? "",
+        "secret",
+        secret[1],
+      );
+    const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
+    if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
+      return serveWithPolicy(env, await findAsset(env, direct[1]), direct[2] ?? "", "public");
+    return error("not_found", 404);
+  }
+
+  if (
+    !["GET", "HEAD"].includes(request.method) &&
+    request.headers.get("origin") !== `https://${OWNER_HOST}` &&
+    request.headers.get("x-shlook-client") !== "1"
+  ) {
+    return error("csrf_denied", 403);
+  }
 
   if (request.method === "GET" && url.pathname === "/health") {
     return json({ ok: true, service: "shlook" });
@@ -422,27 +395,55 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (request.method === "DELETE") return deleteAsset(env, apiAssetRoute[1]);
   }
 
-  const latestRoute = url.pathname.match(/^\/latest(?:\/(.*))?$/);
-  if (request.method === "GET" && latestRoute !== null) {
-    const asset = await latestAsset(env);
-    return asset === null ? error("not_found", 404) : serveAsset(env, asset, latestRoute[1] ?? "");
+  const privacyRoute = url.pathname.match(/^\/api\/assets\/([^/]+)\/(visibility|secret|expiry)$/);
+  if (privacyRoute !== null && assetIdPattern.test(privacyRoute[1])) {
+    const asset = await findAsset(env, privacyRoute[1]);
+    if (asset === null || asset.state === "deleted") return error("not_found", 404);
+    if (isPast(asset.hard_expires_at)) {
+      await deleteAsset(env, asset.id);
+      return error("not_found", 404);
+    }
+    const response = await handlePrivacyMutation(
+      request,
+      env.DB,
+      asset,
+      privacyRoute[2] as "visibility" | "secret" | "expiry",
+    );
+    if (response !== null) {
+      if (privacyRoute[2] === "expiry" && response.ok) {
+        const updated = await findAsset(env, asset.id);
+        if (updated !== null && isPast(updated.hard_expires_at)) await deleteAsset(env, asset.id);
+        else if (updated?.cleanup_pending === 1) await cleanupAssetPage(env, asset.id);
+      }
+      return response;
+    }
   }
 
-  const directRoute = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
-  if (request.method === "GET" && directRoute !== null && assetIdPattern.test(directRoute[1])) {
-    const asset = await findAsset(env, directRoute[1]);
-    return asset === null ? error("not_found", 404) : serveAsset(env, asset, directRoute[2] ?? "");
+  if (request.method === "GET" && /^\/(latest|assets\/)/.test(url.pathname)) {
+    url.hostname = PRIVATE_HOST;
+    return Response.redirect(url.toString(), 302);
   }
 
   return error("not_found", 404);
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+export async function handleRequest(
+  request: Request,
+  env: Env,
+  ctx?: Pick<ExecutionContext, "access">,
+): Promise<Response> {
   try {
-    return await route(request, env);
+    return await route(request, env, ctx);
   } catch {
     return error("internal_error", 500);
   }
 }
 
-export default { fetch: handleRequest } satisfies ExportedHandler<Env>;
+export { cleanupExpired } from "./cleanup";
+
+export default {
+  fetch: handleRequest,
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(cleanupExpired(env));
+  },
+} satisfies ExportedHandler<Env>;
