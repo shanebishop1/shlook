@@ -9,6 +9,7 @@ import {
   validateManifest,
 } from "./artifact";
 import { cleanupAssetPage, cleanupExpired, deleteAsset } from "./cleanup";
+import { ownerPage } from "./owner-ui";
 import {
   artifactAccess,
   assetJson,
@@ -368,6 +369,10 @@ async function route(
 
   if (request.method === "GET" && url.pathname === "/health") {
     return json({ ok: true, service: "shlook" });
+  }
+
+  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/archive")) {
+    return ownerPage(request, env.DB);
   }
 
   if (url.pathname === "/api/assets") {

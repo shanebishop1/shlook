@@ -115,6 +115,18 @@ describe("worker bootstrap", () => {
 
     expect(response.status).toBe(404);
   });
+
+  it("renders a protected owner archive without weakening browser policy", async () => {
+    const asset = await createLiveAsset("owner archive");
+    const response = await request("/");
+    const body = await response.text();
+
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(body).toContain(asset.id);
+    expect(body).toContain(`https://${privateHost}/assets/${asset.id}/`);
+  });
 });
 
 describe("asset publication", () => {
