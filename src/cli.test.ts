@@ -3,7 +3,14 @@ import { expect, test, vi } from "vitest";
 
 import { runCli, type CliDependencies } from "./cli";
 
-const DEFAULT_ORIGIN = "https://show.shane-bishop.com";
+const DEFAULT_ORIGIN = "https://owner.example.com";
+const DEFAULT_ENV = {
+  CF_ACCESS_CLIENT_ID: "test-id",
+  CF_ACCESS_CLIENT_SECRET: "test-secret",
+  SHLOOK_API_ORIGIN: DEFAULT_ORIGIN,
+  SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+  SHLOOK_SHARE_ORIGIN: "https://share.example.com",
+};
 const assetId = "11111111-1111-4111-8111-111111111111";
 const uploadId = "22222222-2222-4222-8222-222222222222";
 
@@ -15,7 +22,7 @@ function harness(overrides: Partial<CliDependencies> = {}) {
     packageRoot: "/package",
     nodeExecutable: "/node",
     wranglerPath: "/package/node_modules/wrangler/bin/wrangler.js",
-    env: { CF_ACCESS_CLIENT_ID: "test-id", CF_ACCESS_CLIENT_SECRET: "test-secret" },
+    env: DEFAULT_ENV,
     fetch: vi.fn(async () => Response.json({ ok: true })),
     runCommand: vi.fn(async () => ({ code: 0 })),
     stdout: (value) => stdout.push(value),
@@ -48,6 +55,21 @@ test("emits the stable JSON envelope for status", async () => {
     data: { ok: true, service: "shlook" },
   });
   expect(context.stderr).toEqual([]);
+
+  const missing = harness({
+    env: { CF_ACCESS_CLIENT_ID: "test-id", CF_ACCESS_CLIENT_SECRET: "test-secret" },
+  });
+  expect(await runCli(["status", "--json"], missing.dependencies)).toBe(1);
+  expect(JSON.parse(missing.stderr[0]).error.code).toBe("configuration_required");
+
+  const unsafePlan = harness({
+    env: {
+      ...DEFAULT_ENV,
+      SHLOOK_API_ORIGIN: "https://user:password@owner.example.com",
+    },
+  });
+  expect(await runCli(["setup", "--plan", "--json"], unsafePlan.dependencies)).toBe(1);
+  expect(unsafePlan.stdout.join("") + unsafePlan.stderr.join("")).not.toContain("password");
 });
 
 test("auth check sends Access headers without leaking credentials", async () => {
@@ -57,6 +79,7 @@ test("auth check sends Access headers without leaking credentials", async () => 
   const context = harness({
     fetch,
     env: {
+      ...DEFAULT_ENV,
       CF_ACCESS_CLIENT_ID: "client-id-value",
       CF_ACCESS_CLIENT_SECRET: "super-secret-value",
     },
@@ -85,18 +108,36 @@ test("setup plan is read-only and reports unresolved inspection conflicts", asyn
   expect(context.dependencies.runCommand).not.toHaveBeenCalled();
   expect(inspectSetup).toHaveBeenCalledOnce();
   expect(output.data.resources).toMatchObject({
-    worker: "shlook",
-    d1: "shlook",
-    r2: "shlook-assets",
-    hosts: ["show.shane-bishop.com", "private.show.shane-bishop.com", "share.shane-bishop.com"],
+    workers: {
+      customDomains: ["one Worker with three custom hostnames"],
+      workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
+    },
+    bindings: { d1: "DB", r2: "ASSETS" },
+    names: "operator_owned",
+    origins: {
+      owner: "https://owner.example.com",
+      private: "https://private.example.com",
+      share: "https://share.example.com",
+    },
   });
+  expect(output.data.ready).toBe(true);
   expect(output.data.access).toBeDefined();
   expect(output.data.inspection).toEqual({ inspected: ["package"], conflicts: [conflict] });
+
+  const partial = harness({
+    inspectSetup,
+    env: { SHLOOK_API_ORIGIN: "https://owner.example.com" },
+  });
+  expect(await runCli(["setup", "--plan", "--json"], partial.dependencies)).toBe(0);
+  expect(JSON.parse(partial.stdout[0]).data).toMatchObject({
+    ready: false,
+    resources: { origins: { owner: "https://owner.example.com" } },
+  });
 });
 
-test("setup apply refuses conflicts and reports Access blocking as top-level failure", async () => {
+test("setup apply refuses mutation and points to the operator-owned setup plan", async () => {
   const runCommand = vi.fn(async () => ({ code: 0 }));
-  const unresolved = harness({
+  const context = harness({
     runCommand,
     inspectSetup: vi.fn(async () => ({
       inspected: ["package"],
@@ -111,55 +152,13 @@ test("setup apply refuses conflicts and reports Access blocking as top-level fai
     })),
   });
 
-  expect(await runCli(["setup", "--apply", "--json"], unresolved.dependencies)).toBe(2);
-  expect(runCommand).not.toHaveBeenCalled();
-  expect(unresolved.stdout).toEqual([]);
-  expect(JSON.parse(unresolved.stderr[0])).toMatchObject({
-    ok: false,
-    command: "setup",
-    error: { code: "setup_conflicts", details: { status: "blocked" } },
-  });
-
-  const context = harness({
-    runCommand,
-    inspectSetup: vi.fn(async () => ({ inspected: ["package", "remote"], conflicts: [] })),
-  });
-
   expect(await runCli(["setup", "--apply", "--json"], context.dependencies)).toBe(2);
-  expect(runCommand.mock.calls).toEqual([
-    [
-      "/node",
-      [
-        "/package/node_modules/wrangler/bin/wrangler.js",
-        "d1",
-        "migrations",
-        "apply",
-        "shlook",
-        "--remote",
-        "--config",
-        "/package/wrangler.jsonc",
-      ],
-      "/package",
-    ],
-    [
-      "/node",
-      [
-        "/package/node_modules/wrangler/bin/wrangler.js",
-        "deploy",
-        "--config",
-        "/package/wrangler.jsonc",
-      ],
-      "/package",
-    ],
-  ]);
+  expect(runCommand).not.toHaveBeenCalled();
   expect(context.stdout).toEqual([]);
   expect(JSON.parse(context.stderr[0])).toMatchObject({
     ok: false,
     command: "setup",
-    error: {
-      code: "access_configuration_required",
-      details: { status: "blocked", completed: ["d1_migrations", "worker_deploy"] },
-    },
+    error: { code: "setup_not_automated", details: { status: "blocked" } },
   });
 });
 
@@ -286,6 +285,7 @@ test("verify uses GET against the configured private origin", async () => {
   const context = harness({
     fetch,
     env: {
+      ...DEFAULT_ENV,
       CF_ACCESS_CLIENT_ID: "test-id",
       CF_ACCESS_CLIENT_SECRET: "test-secret",
       SHLOOK_PRIVATE_ORIGIN: "https://private.test.example/",
@@ -293,7 +293,7 @@ test("verify uses GET against the configured private origin", async () => {
   });
 
   expect(await runCli(["verify", assetId, "--json"], context.dependencies)).toBe(0);
-  expect(fetch.mock.calls[0][0]).toBe(`https://show.shane-bishop.com/api/assets/${assetId}`);
+  expect(fetch.mock.calls[0][0]).toBe(`https://owner.example.com/api/assets/${assetId}`);
   expect(fetch.mock.calls[1][0]).toBe(`https://private.test.example/assets/${assetId}/`);
   expect(fetch.mock.calls[1][1]?.method).toBe("GET");
   expect(JSON.parse(context.stdout[0]).data).toEqual({ assetId, verified: true, status: 200 });
@@ -301,7 +301,11 @@ test("verify uses GET against the configured private origin", async () => {
 
 test("returns a failure exit code and stable sanitized JSON error", async () => {
   const context = harness({
-    env: { CF_ACCESS_CLIENT_ID: "test-id", CF_ACCESS_CLIENT_SECRET: "must-not-leak" },
+    env: {
+      ...DEFAULT_ENV,
+      CF_ACCESS_CLIENT_ID: "test-id",
+      CF_ACCESS_CLIENT_SECRET: "must-not-leak",
+    },
     fetch: vi.fn(async () => Response.json({ error: "not_found" }, { status: 404 })),
   });
 

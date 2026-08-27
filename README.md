@@ -1,7 +1,74 @@
 # shlook
 
-Private-by-default Cloudflare hosting for agent-created HTML, static sites, and
-images. The service is deployed while release acceptance remains in progress.
+`shlook` is a reusable, self-hosted Cloudflare package for publishing agent-created HTML,
+static sites, and raster images. Publications are private by default; public and secret-link
+sharing require an explicit visibility change.
+
+## Security model
+
+A deployment has three browser origins with different trust levels:
+
+| Origin  | Purpose                                          | Cloudflare Access |
+| ------- | ------------------------------------------------ | ----------------- |
+| Owner   | Owner UI, health check, and all `/api` mutations | Required          |
+| Private | Owner-authenticated artifact viewing             | Required          |
+| Share   | Explicitly public and capability-link artifacts  | Not enabled       |
+
+Untrusted artifacts can contain active HTML and JavaScript. They must never share an origin
+with the owner UI or mutation API: same-origin artifact code could send owner-authorized API
+requests. For that reason, one-origin path multiplexing such as `/api`, `/private`, and
+`/share` on one hostname is not supported. Paths are not a browser security boundary.
+
+## Deployment modes
+
+Choose one of these secure topologies:
+
+1. **Account with a domain:** assign three distinct hostnames, for example
+   `owner.example.com`, `private.example.com`, and `share.example.com`. Disable the
+   `workers.dev` and preview URLs so they cannot bypass Access.
+2. **Account without a domain:** deploy three distinct Worker names. Their production URLs
+   become three origins such as `shlook-owner.<workers-subdomain>.workers.dev`,
+   `shlook-private.<workers-subdomain>.workers.dev`, and
+   `shlook-share.<workers-subdomain>.workers.dev`. Enable Access separately on the owner and
+   private `workers.dev` routes; leave only the share route unauthenticated.
+
+All three deployments use the same D1 database and private R2 bucket. D1 stores metadata and
+lifecycle state; R2 stores artifact bytes and must not have an `r2.dev` URL or public custom
+domain. Apply the packaged D1 migrations before serving traffic.
+
+Every deployed Worker must receive these non-secret variables through its operator-owned
+Wrangler configuration:
+
+```text
+SHLOOK_OWNER_ORIGIN=https://<owner-host>
+SHLOOK_PRIVATE_ORIGIN=https://<private-host>
+SHLOOK_SHARE_ORIGIN=https://<share-host>
+SHLOOK_OWNER_EMAIL=<owner-email>
+```
+
+Set these operator-owned values for every CLI or agent environment:
+
+```bash
+export SHLOOK_API_ORIGIN="https://<owner-host>"
+export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
+export SHLOOK_SHARE_ORIGIN="https://<share-host>"
+export CF_ACCESS_CLIENT_ID="<agent-service-token-client-id>"
+export CF_ACCESS_CLIENT_SECRET="<agent-service-token-client-secret>"
+```
+
+Do not rely on package defaults for a self-hosted installation. See
+[`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for the manual
+operator checklist. The packaged `shlook setup` command does not create D1, R2, DNS,
+Worker routes, Access applications, policies, or service tokens.
+
+## Route grammar
+
+- Owner: `/`, `/archive`, `/health`, and `/api/assets...`
+- Private: `/latest[/<artifact-path>]` and `/assets/<asset-id>[/<artifact-path>]`
+- Share: `/assets/<asset-id>[/<artifact-path>]` and
+  `/s/<capability>/assets/<asset-id>[/<artifact-path>]`
+
+Unknown routes and artifacts unavailable to the requested audience return `404`.
 
 ## Development
 
@@ -13,42 +80,9 @@ pnpm fmt
 pnpm run ci
 ```
 
-Oxlint owns linting and Oxfmt owns formatting. `pnpm run ci` runs lint, format
-checking, strict TypeScript checking, tests, and a Wrangler dry-run build.
-
-## Architecture
-
-One Cloudflare Worker owns the API and artifact-serving routes. One D1 database
-stores metadata and lifecycle state; one private R2 bucket stores bytes. The E1
-runtime supports private asset creation, file upload, manifest finalization,
-inspection, archive listing, latest/direct views, and exact-one-asset deletion.
-Uploads remain hidden until every manifest file is durable and the asset enters
-the `live` state.
-
-Current owner and API routes:
-
-- `POST /api/assets` creates an uploading asset.
-- `PUT /api/assets/:id/files/:path` uploads one regular file.
-- `POST /api/assets/:id/finalize` validates `{ entrypoint, files }` and publishes.
-- `GET /api/assets?offset=<n>` and `GET /api/assets/:id` page and inspect assets.
-- `PATCH /api/assets/:id/visibility` and `/expiry` control sharing and lifecycle.
-- `POST` or `DELETE /api/assets/:id/secret` rotates or revokes a capability URL.
-- `GET /latest` and `GET /assets/:id/` serve live content.
-- `DELETE /api/assets/:id` deletes one asset and its scoped objects.
-- `GET /` and `GET /archive` render the responsive owner archive and lifecycle
-  controls.
-
-Host boundaries:
-
-- `show.shane-bishop.com`: owner UI and agent API behind Cloudflare Access.
-- `private.show.shane-bishop.com`: owner-authenticated private artifacts.
-- `share.shane-bishop.com`: explicitly public or secret-link artifacts.
-
-The Worker rejects unknown hosts. Owner/private requests require verified
-Cloudflare Access context; artifact HTML is sandboxed away from the owner API.
-
-See `docs/project.md` for operational boundaries and gate status.
+Oxlint owns linting and Oxfmt owns formatting. `pnpm run ci` runs lint, format checking,
+strict TypeScript checking, tests, and a Wrangler dry-run build.
 
 ## License
 
-MIT, Copyright Shane Bishop. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

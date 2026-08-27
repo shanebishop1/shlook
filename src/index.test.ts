@@ -2,131 +2,25 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations, reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { cleanupExpired, handleRequest, type Env } from "./index";
-import { handlePrivacyMutation } from "./privacy";
-
-const ownerHost = "show.shane-bishop.com";
-const privateHost = "private.show.shane-bishop.com";
-const shareHost = "share.shane-bishop.com";
-const worker = handleRequest as (
-  request: Request,
-  env: Env,
-  ctx?: ExecutionContext,
-) => Promise<Response>;
-
-function accessContext(email: string | null = "shaneebishop@gmail.com"): ExecutionContext {
-  return {
-    access: {
-      aud: "test-audience",
-      getIdentity: async () => (email === null ? undefined : { email }),
-    },
-  } as unknown as ExecutionContext;
-}
+import { cleanupExpired } from "./index";
+import { deploymentConfig, handlePrivacyMutation } from "./privacy";
+import {
+  accessContext,
+  createAsset,
+  createLiveAsset,
+  finalizeAsset,
+  ownerHost,
+  privateHost,
+  request,
+  shareHost,
+  uploadedFile,
+  uploadFile,
+  type AssetJson,
+} from "./test-harness";
 
 beforeEach(async () => {
   await reset();
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
-});
-
-interface AssetJson {
-  id: string;
-  state: "uploading" | "finalizing" | "live";
-  visibility: "private";
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ManifestFile {
-  path: string;
-  uploadId: string;
-}
-
-async function request(
-  pathname: string,
-  init?: RequestInit,
-  host = ownerHost,
-  ctx: ExecutionContext | null = accessContext(),
-): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  if (
-    host === ownerHost &&
-    !["GET", "HEAD"].includes(init?.method ?? "GET") &&
-    !headers.has("origin")
-  ) {
-    headers.set("x-shlook-client", "1");
-  }
-  return worker(
-    new Request(`https://${host}${pathname}`, { ...init, headers }),
-    env,
-    ctx ?? undefined,
-  );
-}
-
-async function createAsset(): Promise<AssetJson> {
-  const response = await request("/api/assets", { method: "POST" });
-  const body = (await response.json()) as { asset: AssetJson };
-  return body.asset;
-}
-
-async function uploadFile(
-  id: string,
-  pathname: string,
-  body: string,
-  contentType = "text/plain",
-): Promise<Response> {
-  return request(`/api/assets/${id}/files/${pathname}`, {
-    method: "PUT",
-    headers: { "content-type": contentType },
-    body,
-  });
-}
-
-async function uploadedFile(response: Response): Promise<ManifestFile> {
-  const body = (await response.json()) as { file: ManifestFile };
-  return body.file;
-}
-
-async function finalizeAsset(id: string, files: ManifestFile[], entrypoint = files[0]?.path) {
-  return request(`/api/assets/${id}/finalize`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ entrypoint, files }),
-  });
-}
-
-async function createLiveAsset(contents: string): Promise<AssetJson> {
-  const asset = await createAsset();
-  const upload = await uploadFile(asset.id, "index.html", contents, "text/html");
-  expect(upload.status).toBe(201);
-  expect((await finalizeAsset(asset.id, [await uploadedFile(upload)])).status).toBe(200);
-  return asset;
-}
-
-describe("worker bootstrap", () => {
-  it("reports service health", async () => {
-    const response = await request("/health");
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, service: "shlook" });
-  });
-
-  it("rejects unknown routes", async () => {
-    const response = await request("/missing");
-
-    expect(response.status).toBe(404);
-  });
-
-  it("renders a protected owner archive without weakening browser policy", async () => {
-    const asset = await createLiveAsset("owner archive");
-    const response = await request("/");
-    const body = await response.text();
-
-    expect(response.headers.get("content-type")).toContain("text/html");
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
-    expect(body).toContain(asset.id);
-    expect(body).toContain(`https://${privateHost}/assets/${asset.id}/`);
-  });
 });
 
 describe("asset publication", () => {
@@ -308,6 +202,14 @@ describe("privacy and lifecycle", () => {
   it("returns not found for every unknown host", async () => {
     expect((await request("/health", undefined, "worker.example.com")).status).toBe(404);
     expect((await request("/api/assets", undefined, "worker.example.com")).status).toBe(404);
+    expect(() =>
+      deploymentConfig({
+        SHLOOK_OWNER_ORIGIN: "https://same.example.com",
+        SHLOOK_PRIVATE_ORIGIN: "https://same.example.com",
+        SHLOOK_SHARE_ORIGIN: "https://share.example.com",
+        SHLOOK_OWNER_EMAIL: "owner@example.com",
+      }),
+    ).toThrow("three distinct origins");
   });
 
   it("requires verified Access context and the accepted owner identity", async () => {
@@ -382,6 +284,7 @@ describe("privacy and lifecycle", () => {
       .first<{ secret_hash: string }>();
 
     expect(body.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(new URL(body.url).origin).toBe(`https://${shareHost}`);
     expect(row?.secret_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(row?.secret_hash).not.toBe(body.secret);
     expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
@@ -488,6 +391,7 @@ describe("privacy and lifecycle", () => {
         hard_expires_at: null,
       },
       "expiry",
+      `https://${shareHost}`,
     );
     expect(staleUpdate?.status).toBe(409);
 

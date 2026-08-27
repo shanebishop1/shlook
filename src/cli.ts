@@ -8,13 +8,12 @@ import { parseArgs } from "node:util";
 import {
   inspectPackagedSetup,
   loadPublishInput,
+  sanitizeCliValue,
   setupPlanData,
   type PublishInput,
   type SetupInspection,
 } from "./cli-files.ts";
 
-const DEFAULT_ORIGIN = "https://show.shane-bishop.com";
-const PRIVATE_ORIGIN = "https://private.show.shane-bishop.com";
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -127,12 +126,46 @@ function ownerHeaders(dependencies: CliDependencies, jsonBody = false): Headers 
   return headers;
 }
 
+function configuredOrigin(value: string | undefined, name: string): string {
+  if (value === undefined) throw new CliError("configuration_required", `${name} is required`);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new CliError("invalid_configuration", `${name} must be a valid URL`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new CliError("invalid_configuration", `${name} must be an HTTPS origin without a path`);
+  }
+  return url.origin;
+}
+
+function origins(dependencies: CliDependencies) {
+  const owner = configuredOrigin(dependencies.env.SHLOOK_API_ORIGIN, "SHLOOK_API_ORIGIN");
+  const privateOrigin = configuredOrigin(
+    dependencies.env.SHLOOK_PRIVATE_ORIGIN,
+    "SHLOOK_PRIVATE_ORIGIN",
+  );
+  const share = configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN");
+  if (new Set([owner, privateOrigin, share]).size !== 3) {
+    throw new CliError("invalid_configuration", "shlook requires three distinct origins");
+  }
+  return { owner, private: privateOrigin, share };
+}
+
 function origin(dependencies: CliDependencies): string {
-  return (dependencies.env.SHLOOK_API_ORIGIN ?? DEFAULT_ORIGIN).replace(/\/+$/, "");
+  return origins(dependencies).owner;
 }
 
 function privateOrigin(dependencies: CliDependencies): string {
-  return (dependencies.env.SHLOOK_PRIVATE_ORIGIN ?? PRIVATE_ORIGIN).replace(/\/+$/, "");
+  return origins(dependencies).private;
 }
 
 async function responseData(response: Response): Promise<unknown> {
@@ -161,26 +194,6 @@ async function api(
   return responseData(response);
 }
 
-function sanitized(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitized);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => {
-        const normalized = key.replaceAll(/[^a-z]/gi, "").toLowerCase();
-        return ![
-          "secret",
-          "secrethash",
-          "token",
-          "apitoken",
-          "accesstoken",
-          "clientsecret",
-        ].includes(normalized);
-      })
-      .map(([key, child]) => [key, sanitized(child)]),
-  );
-}
-
 async function setupInspection(dependencies: CliDependencies): Promise<SetupInspection> {
   return (
     dependencies.inspectSetup?.() ??
@@ -192,52 +205,35 @@ async function setupInspection(dependencies: CliDependencies): Promise<SetupInsp
 }
 
 async function setupPlan(dependencies: CliDependencies) {
-  return setupPlanData(await setupInspection(dependencies));
+  const configured = {
+    owner:
+      dependencies.env.SHLOOK_API_ORIGIN === undefined
+        ? undefined
+        : configuredOrigin(dependencies.env.SHLOOK_API_ORIGIN, "SHLOOK_API_ORIGIN"),
+    private:
+      dependencies.env.SHLOOK_PRIVATE_ORIGIN === undefined
+        ? undefined
+        : configuredOrigin(dependencies.env.SHLOOK_PRIVATE_ORIGIN, "SHLOOK_PRIVATE_ORIGIN"),
+    share:
+      dependencies.env.SHLOOK_SHARE_ORIGIN === undefined
+        ? undefined
+        : configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN"),
+  };
+  const supplied = Object.values(configured).filter((value) => value !== undefined);
+  if (new Set(supplied).size !== supplied.length) {
+    throw new CliError("invalid_configuration", "configured shlook origins must be distinct");
+  }
+  return setupPlanData(await setupInspection(dependencies), configured);
 }
 
 async function setupApply(dependencies: CliDependencies): Promise<never> {
-  const inspection = await setupInspection(dependencies);
-  if (inspection.conflicts.length > 0) {
-    throw new CliError(
-      "setup_conflicts",
-      "setup apply refused unresolved or conflicting inspection results",
-      undefined,
-      { status: "blocked", inspection },
-      2,
-    );
-  }
-  const packageRoot = dependencies.packageRoot ?? PACKAGE_ROOT;
-  const wrangler = dependencies.wranglerPath ?? resolvePinnedWrangler();
-  const config = join(packageRoot, "wrangler.jsonc");
-  const steps: Array<[string, string[]]> = [
-    [
-      "d1_migrations",
-      [wrangler, "d1", "migrations", "apply", "shlook", "--remote", "--config", config],
-    ],
-    ["worker_deploy", [wrangler, "deploy", "--config", config]],
-  ];
-  const completed: string[] = [];
-  for (const [name, args] of steps) {
-    const result = await dependencies.runCommand(
-      dependencies.nodeExecutable ?? process.execPath,
-      args,
-      packageRoot,
-    );
-    if (result.code !== 0)
-      throw new CliError("command_failed", `${name} failed with exit code ${result.code}`);
-    completed.push(name);
-  }
   throw new CliError(
-    "access_configuration_required",
-    "Wrangler steps completed, but Access and host provisioning remain unapplied",
+    "setup_not_automated",
+    "setup apply is intentionally unavailable; follow the setup reference with an operator-owned Wrangler config",
     undefined,
     {
       status: "blocked",
-      completed,
-      access: {
-        status: "not_applied",
-        requires: "E5 Access, DNS, and custom-domain provisioning",
-      },
+      plan: await setupPlan(dependencies),
     },
     2,
   );
@@ -414,7 +410,7 @@ export async function runCli(
     json = parsed.options.json ?? false;
     command = parsed.positionals[0] ?? "unknown";
     const result = await dispatch(parsed.positionals, parsed.options, dependencies);
-    const data = result.allowSecrets ? result.data : sanitized(result.data);
+    const data = result.allowSecrets ? result.data : sanitizeCliValue(result.data);
     const output = { ok: true, command: result.command, data };
     dependencies.stdout(`${JSON.stringify(output, null, json ? 0 : 2)}\n`);
     return result.exitCode ?? 0;
@@ -433,7 +429,7 @@ export async function runCli(
         code: error.code,
         message: error.message,
         ...(error.status === undefined ? {} : { status: error.status }),
-        ...(error.details === undefined ? {} : { details: sanitized(error.details) }),
+        ...(error.details === undefined ? {} : { details: sanitizeCliValue(error.details) }),
       },
     };
     dependencies.stderr(json ? `${JSON.stringify(output)}\n` : `shlook: ${error.message}\n`);

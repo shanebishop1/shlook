@@ -1,9 +1,47 @@
 import { readJsonWithin } from "./request";
 
-export const OWNER_HOST = "show.shane-bishop.com";
-export const PRIVATE_HOST = "private.show.shane-bishop.com";
-export const SHARE_HOST = "share.shane-bishop.com";
-const ownerEmail = "shaneebishop@gmail.com";
+export interface DeploymentEnv {
+  SHLOOK_OWNER_ORIGIN: string;
+  SHLOOK_PRIVATE_ORIGIN: string;
+  SHLOOK_SHARE_ORIGIN: string;
+  SHLOOK_OWNER_EMAIL: string;
+}
+
+export interface DeploymentConfig {
+  ownerOrigin: string;
+  privateOrigin: string;
+  shareOrigin: string;
+  ownerEmail: string;
+}
+
+function configuredOrigin(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error("shlook origins must be distinct HTTPS origins without paths");
+  }
+  return url.origin;
+}
+
+export function deploymentConfig(env: DeploymentEnv): DeploymentConfig {
+  const ownerOrigin = configuredOrigin(env.SHLOOK_OWNER_ORIGIN);
+  const privateOrigin = configuredOrigin(env.SHLOOK_PRIVATE_ORIGIN);
+  const shareOrigin = configuredOrigin(env.SHLOOK_SHARE_ORIGIN);
+  if (new Set([ownerOrigin, privateOrigin, shareOrigin]).size !== 3) {
+    throw new Error("shlook requires three distinct origins");
+  }
+  const ownerEmail = env.SHLOOK_OWNER_EMAIL.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
+    throw new Error("SHLOOK_OWNER_EMAIL must be an email address");
+  }
+  return { ownerOrigin, privateOrigin, shareOrigin, ownerEmail };
+}
 
 export interface PrivacyAsset {
   id: string;
@@ -31,7 +69,10 @@ export function assetJson(row: PublicAsset) {
   };
 }
 
-export async function hasOwnerAccess(ctx?: Pick<ExecutionContext, "access">): Promise<boolean> {
+export async function hasOwnerAccess(
+  ownerEmail: string,
+  ctx?: Pick<ExecutionContext, "access">,
+): Promise<boolean> {
   if (ctx?.access === undefined) return false;
   try {
     const identity = await ctx.access.getIdentity();
@@ -109,6 +150,7 @@ export async function handlePrivacyMutation(
   db: D1Database,
   asset: PrivacyAsset,
   operation: "visibility" | "secret" | "expiry",
+  shareOrigin: string,
 ): Promise<Response | null> {
   if (asset.state !== "live") return json({ error: "asset_not_live" }, 409);
 
@@ -143,7 +185,7 @@ export async function handlePrivacyMutation(
       if (mode === "rotate") return json({ error: "secret_missing" }, 409);
       return json({ error: "asset_not_live" }, 409);
     }
-    return json({ secret, url: `https://${SHARE_HOST}/s/${secret}/assets/${asset.id}/` });
+    return json({ secret, url: `${shareOrigin}/s/${secret}/assets/${asset.id}/` });
   }
   if (operation === "secret" && request.method === "DELETE") {
     const updated = await liveUpdate(

@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shlook",
+  "main": "node_modules/shlook/src/index.ts",
+  "compatibility_date": "2026-08-26",
+  "account_id": "<cloudflare-account-id>",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "<owner-hostname>", "custom_domain": true },
+    { "pattern": "<private-hostname>", "custom_domain": true },
+    { "pattern": "<share-hostname>", "custom_domain": true },
+  ],
+  "vars": {
+    "SHLOOK_OWNER_ORIGIN": "https://<owner-hostname>",
+    "SHLOOK_PRIVATE_ORIGIN": "https://<private-hostname>",
+    "SHLOOK_SHARE_ORIGIN": "https://<share-hostname>",
+    "SHLOOK_OWNER_EMAIL": "<owner-email>",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "<database-name>",
+      "database_id": "<database-id>",
+      "migrations_dir": "node_modules/shlook/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "<private-bucket-name>",
+    },
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"],
+  },
+}

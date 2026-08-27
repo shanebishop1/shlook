@@ -10,7 +10,15 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.jsonc" },
-        miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+        miniflare: {
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            SHLOOK_OWNER_ORIGIN: "https://owner.example.com",
+            SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+            SHLOOK_SHARE_ORIGIN: "https://share.example.com",
+            SHLOOK_OWNER_EMAIL: "owner@example.com",
+          },
+        },
       }),
     ],
   };

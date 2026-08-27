@@ -26,11 +26,37 @@ export interface SetupInspection {
   conflicts: SetupConflict[];
 }
 
+export function sanitizeCliValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeCliValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => {
+        const normalized = key.replaceAll(/[^a-z]/gi, "").toLowerCase();
+        return ![
+          "secret",
+          "secrethash",
+          "token",
+          "apitoken",
+          "accesstoken",
+          "clientsecret",
+        ].includes(normalized);
+      })
+      .map(([key, child]) => [key, sanitizeCliValue(child)]),
+  );
+}
+
 export async function inspectPackagedSetup(
   packageRoot: string,
   wranglerPath: string,
 ): Promise<SetupInspection> {
-  const required = ["wrangler.jsonc", "migrations", "src/index.ts"];
+  const required = [
+    "wrangler.jsonc",
+    "migrations",
+    "src/index.ts",
+    "examples/wrangler.custom-domains.jsonc",
+    "examples/wrangler.workers-dev.jsonc",
+  ];
   const conflicts: SetupConflict[] = [];
   for (const path of required) {
     try {
@@ -63,21 +89,35 @@ export async function inspectPackagedSetup(
   return { inspected: ["package"], conflicts };
 }
 
-export function setupPlanData(inspection: SetupInspection) {
+export function setupPlanData(
+  inspection: SetupInspection,
+  origins: {
+    owner?: string;
+    private?: string;
+    share?: string;
+  },
+) {
   return {
     mode: "plan",
+    ready:
+      origins.owner !== undefined && origins.private !== undefined && origins.share !== undefined,
     resources: {
-      worker: "shlook",
-      d1: "shlook",
-      r2: "shlook-assets",
-      hosts: ["show.shane-bishop.com", "private.show.shane-bishop.com", "share.shane-bishop.com"],
+      workers: {
+        customDomains: ["one Worker with three custom hostnames"],
+        workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
+      },
+      bindings: { d1: "DB", r2: "ASSETS" },
+      names: "operator_owned",
+      origins,
     },
     access: {
-      application: "shlook owner hosts",
+      applications: ["owner origin", "private origin"],
       serviceToken: "agent owner API authentication",
       policy: "owner email and service token",
-      requires: "narrow Cloudflare API token",
+      publicOrigin: "share origin remains outside Access",
     },
+    automation: "not_applied",
+    next: "follow the packaged setup reference and create an operator-owned Wrangler config",
     inspection,
   };
 }

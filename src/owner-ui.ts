@@ -1,5 +1,3 @@
-import { PRIVATE_HOST } from "./privacy";
-
 interface OwnerAsset {
   id: string;
   visibility: "private" | "secret_link" | "public";
@@ -25,9 +23,9 @@ function escapeHtml(value: string): string {
   });
 }
 
-function assetCard(asset: OwnerAsset, latest: boolean): string {
+function assetCard(asset: OwnerAsset, latest: boolean, privateOrigin: string): string {
   const id = escapeHtml(asset.id);
-  const privateUrl = `https://${PRIVATE_HOST}/assets/${id}/`;
+  const privateUrl = `${privateOrigin}/assets/${id}/`;
   const secretAction = asset.has_secret === 1 ? "rotate" : "create";
   const visibilityOptions = ["private", "secret_link", "public"]
     .map(
@@ -75,7 +73,11 @@ function styles(): string {
   return `:root{color-scheme:light;--paper:#efe8d8;--ink:#1d211d;--muted:#6a695f;--line:#aca58f;--signal:#da3a1b;--panel:#f8f2e5}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Iowan Old Style","Palatino Linotype",Palatino,serif}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.2;background-image:repeating-linear-gradient(0deg,transparent 0 4px,#786f5c12 5px)}header,main,footer{width:min(1180px,calc(100% - 40px));margin-inline:auto}header{display:grid;grid-template-columns:1fr auto;align-items:end;padding:42px 0 25px;border-bottom:3px solid var(--ink)}.kicker,.card-rule,dt,label,button,.folio{font:700 11px/1.25 ui-monospace,"Cascadia Mono",monospace;letter-spacing:.12em;text-transform:uppercase}.kicker{color:var(--signal);margin:0 0 7px}h1{font-size:clamp(46px,9vw,104px);font-weight:500;line-height:.75;letter-spacing:-.07em;margin:0}header aside{text-align:right;border-left:1px solid var(--line);padding-left:24px;color:var(--muted)}header aside b{display:block;font:700 14px ui-monospace,monospace;color:var(--ink);margin-top:6px}.intro{display:grid;grid-template-columns:2fr 1fr;gap:28px;padding:38px 0 28px}.intro p{font-size:clamp(19px,2.3vw,29px);line-height:1.15;max-width:720px;margin:0}.latest-label{align-self:end;text-align:right;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.asset-card{position:relative;background:var(--panel);border:1px solid var(--ink);padding:22px;box-shadow:5px 5px 0 #1d211d14;animation:arrive .45s both}.asset-card:nth-child(2n){animation-delay:.08s}.latest-card{grid-column:1/-1;border-top:7px solid var(--signal);padding:clamp(24px,4vw,48px)}.card-rule{display:flex;justify-content:space-between;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:8px}.card-rule span{color:var(--signal)}h2{font-size:clamp(30px,5vw,65px);font-weight:400;letter-spacing:-.045em;margin:22px 0 4px}h2 span{color:var(--muted)}.view-link{display:inline-block;color:var(--ink);font-style:italic;font-size:17px;text-decoration-thickness:1px;text-underline-offset:5px;margin-bottom:24px}.view-link b{color:var(--signal)}dl{display:flex;gap:28px;margin:0 0 20px}dl div{border-left:2px solid var(--line);padding-left:10px}dt{color:var(--muted)}dd{margin:4px 0 0;font-size:14px}.controls{border-top:1px solid var(--line);padding-top:18px;display:grid;gap:13px}label{display:grid;gap:6px;color:var(--muted)}select,input,button{border:1px solid var(--ink);border-radius:0;background:#fffaf0;color:var(--ink);padding:11px 12px;font:600 13px ui-monospace,"Cascadia Mono",monospace}button{cursor:pointer;background:var(--ink);color:var(--paper);transition:transform .15s,background .15s}button:hover{transform:translateY(-2px);background:var(--signal)}button.quiet{background:transparent;color:var(--ink)}button.danger{background:transparent;color:var(--signal);border-color:var(--signal)}.button-row,.expiry-grid{display:flex;gap:10px}.expiry-grid label{flex:1}.end-row{justify-content:space-between}.card-status{min-height:19px;margin:10px 0 0;color:#266340;font:600 12px ui-monospace,monospace;overflow-wrap:anywhere}.card-status.error{color:var(--signal)}.empty{grid-column:1/-1;padding:80px 20px;border-block:1px solid var(--line);text-align:center;font-size:24px}.pagination{display:flex;justify-content:space-between;padding:28px 0}.pagination a{color:var(--ink);font:700 12px ui-monospace,monospace;text-transform:uppercase}footer{display:flex;justify-content:space-between;padding:30px 0 45px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}@keyframes arrive{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@media(max-width:700px){header{grid-template-columns:1fr;padding-top:28px}header aside{display:none}.intro{grid-template-columns:1fr}.latest-label{text-align:left}.grid{grid-template-columns:1fr}.latest-card{grid-column:auto}.asset-card,.latest-card{padding:20px}h2{font-size:34px}.button-row,.expiry-grid{flex-direction:column}.end-row{align-items:stretch}dl{display:grid;gap:10px}footer{display:grid;gap:8px}}@media(prefers-reduced-motion:reduce){.asset-card{animation:none}button{transition:none}}`;
 }
 
-export async function ownerPage(request: Request, db: D1Database): Promise<Response> {
+export async function ownerPage(
+  request: Request,
+  db: D1Database,
+  privateOrigin: string,
+): Promise<Response> {
   const url = new URL(request.url);
   const offset = Number(url.searchParams.get("offset") ?? 0);
   if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -94,7 +96,7 @@ export async function ownerPage(request: Request, db: D1Database): Promise<Respo
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
   const nonce = btoa(String.fromCharCode(...nonceBytes));
   const cards = assets
-    .map((asset, index) => assetCard(asset, offset === 0 && index === 0))
+    .map((asset, index) => assetCard(asset, offset === 0 && index === 0, privateOrigin))
     .join("");
   const previous =
     offset > 0
@@ -108,7 +110,7 @@ export async function ownerPage(request: Request, db: D1Database): Promise<Respo
   <header><div><p class="kicker">Private artifact registry</p><h1>shlook</h1></div><aside>Owner archive<b>${assets.length} on this folio</b></aside></header>
   <main><section class="intro"><p>A quiet ledger for work worth keeping. Inspect privately, expose deliberately, erase exactly.</p><div class="latest-label kicker">Folio ${Math.floor(offset / pageSize) + 1}<br>${new Date().toISOString().slice(0, 10)}</div></section>
   <section class="grid" aria-label="Artifact archive">${cards || '<div class="empty">No live artifacts in the ledger.</div>'}</section><nav class="pagination" aria-label="Archive pages">${previous}${next}</nav></main>
-  <footer><span>Access protected / storage private</span><span class="folio">show.shane-bishop.com</span></footer><script nonce="${nonce}">${script()}</script></body></html>`;
+  <footer><span>Access protected / storage private</span><span class="folio">${escapeHtml(url.hostname)}</span></footer><script nonce="${nonce}">${script()}</script></body></html>`;
   return new Response(body, {
     headers: {
       "cache-control": "private, no-store",

@@ -8,49 +8,28 @@ import {
   uploadKey,
   validateManifest,
 } from "./artifact";
+import { assetColumns, findAsset, latestAsset, type AssetRow } from "./asset-store";
 import { cleanupAssetPage, cleanupExpired, deleteAsset } from "./cleanup";
 import { ownerPage } from "./owner-ui";
 import {
   artifactAccess,
   assetJson,
+  deploymentConfig,
   handlePrivacyMutation,
   hasOwnerAccess,
   isPast,
-  OWNER_HOST,
-  PRIVATE_HOST,
-  SHARE_HOST,
+  type DeploymentEnv,
 } from "./privacy";
 import { readJsonWithin } from "./request";
 
-export interface Env {
+export interface Env extends DeploymentEnv {
   ASSETS: R2Bucket;
   DB: D1Database;
 }
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
-const assetColumns =
-  "id, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, " +
-  "secret_hash, share_expires_at, hard_expires_at, cleanup_pending, cleanup_checked_at, " +
-  "created_at, updated_at";
 const maxUploads = 500;
 const finalizeLeaseMilliseconds = 5 * 60 * 1000;
-
-interface AssetRow {
-  id: string;
-  state: "uploading" | "finalizing" | "live" | "deleted";
-  visibility: "private" | "secret_link" | "public";
-  upload_count: number;
-  finalize_token: string | null;
-  finalize_started_at: string | null;
-  manifest_id: string | null;
-  secret_hash: string | null;
-  share_expires_at: string | null;
-  hard_expires_at: string | null;
-  cleanup_pending: number;
-  cleanup_checked_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: jsonHeaders });
@@ -58,22 +37,6 @@ function json(data: unknown, status = 200): Response {
 
 function error(code: string, status: number): Response {
   return json({ error: code }, status);
-}
-
-async function findAsset(env: Env, id: string): Promise<AssetRow | null> {
-  return env.DB.prepare(`SELECT ${assetColumns} FROM assets WHERE id = ?`)
-    .bind(id)
-    .first<AssetRow>();
-}
-
-async function latestAsset(env: Env): Promise<AssetRow | null> {
-  return env.DB.prepare(
-    `SELECT ${assetColumns} FROM assets ` +
-      "WHERE state = 'live' AND (hard_expires_at IS NULL OR hard_expires_at > ?) " +
-      "ORDER BY created_at DESC, id DESC LIMIT 1",
-  )
-    .bind(new Date().toISOString())
-    .first<AssetRow>();
 }
 
 async function createAsset(env: Env): Promise<Response> {
@@ -125,7 +88,7 @@ async function listAssets(request: Request, env: Env): Promise<Response> {
 }
 
 async function inspectAsset(env: Env, id: string): Promise<Response> {
-  const asset = await findAsset(env, id);
+  const asset = await findAsset(env.DB, id);
   if (asset === null || asset.state === "deleted") return error("not_found", 404);
   if (isPast(asset.hard_expires_at)) {
     await deleteAsset(env, id);
@@ -153,7 +116,7 @@ async function uploadFile(
     .bind(new Date().toISOString(), id, maxUploads)
     .run();
   if (reservation.meta.changes !== 1) {
-    const asset = await findAsset(env, id);
+    const asset = await findAsset(env.DB, id);
     if (asset === null || asset.state === "deleted") return error("not_found", 404);
     return asset.state === "uploading"
       ? error("upload_limit_reached", 409)
@@ -171,7 +134,7 @@ async function uploadFile(
 
   let current: AssetRow | null;
   try {
-    current = await findAsset(env, id);
+    current = await findAsset(env.DB, id);
   } catch (cause) {
     await env.ASSETS.delete(key).then(
       () => releaseUploadSlot(env, id),
@@ -200,7 +163,7 @@ async function releaseUploadSlot(env: Env, id: string): Promise<void> {
 }
 
 async function finalizeAsset(request: Request, env: Env, id: string): Promise<Response> {
-  const asset = await findAsset(env, id);
+  const asset = await findAsset(env.DB, id);
   if (asset === null || asset.state === "deleted") return error("not_found", 404);
 
   let value: unknown;
@@ -324,21 +287,26 @@ async function route(
   ctx?: Pick<ExecutionContext, "access">,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const host = url.hostname;
-  if (![OWNER_HOST, PRIVATE_HOST, SHARE_HOST].includes(host)) return error("not_found", 404);
-  if (host !== SHARE_HOST && !(await hasOwnerAccess(ctx))) return error("access_required", 403);
+  const config = deploymentConfig(env);
+  const requestOrigin = url.origin;
+  if (![config.ownerOrigin, config.privateOrigin, config.shareOrigin].includes(requestOrigin)) {
+    return error("not_found", 404);
+  }
+  if (requestOrigin !== config.shareOrigin && !(await hasOwnerAccess(config.ownerEmail, ctx))) {
+    return error("access_required", 403);
+  }
 
-  if (host === PRIVATE_HOST) {
+  if (requestOrigin === config.privateOrigin) {
     const latest = url.pathname.match(/^\/latest(?:\/(.*))?$/);
     if (request.method === "GET" && latest !== null)
-      return serveWithPolicy(env, await latestAsset(env), latest[1] ?? "", "private");
+      return serveWithPolicy(env, await latestAsset(env.DB), latest[1] ?? "", "private");
     const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
     if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
-      return serveWithPolicy(env, await findAsset(env, direct[1]), direct[2] ?? "", "private");
+      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "private");
     return error("not_found", 404);
   }
 
-  if (host === SHARE_HOST) {
+  if (requestOrigin === config.shareOrigin) {
     const secret = url.pathname.match(/^\/s\/([^/]+)\/assets\/([^/]+)(?:\/(.*))?$/);
     if (
       request.method === "GET" &&
@@ -348,20 +316,20 @@ async function route(
     )
       return serveWithPolicy(
         env,
-        await findAsset(env, secret[2]),
+        await findAsset(env.DB, secret[2]),
         secret[3] ?? "",
         "secret",
         secret[1],
       );
     const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
     if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
-      return serveWithPolicy(env, await findAsset(env, direct[1]), direct[2] ?? "", "public");
+      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "public");
     return error("not_found", 404);
   }
 
   if (
     !["GET", "HEAD"].includes(request.method) &&
-    request.headers.get("origin") !== `https://${OWNER_HOST}` &&
+    request.headers.get("origin") !== config.ownerOrigin &&
     request.headers.get("x-shlook-client") !== "1"
   ) {
     return error("csrf_denied", 403);
@@ -372,7 +340,7 @@ async function route(
   }
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/archive")) {
-    return ownerPage(request, env.DB);
+    return ownerPage(request, env.DB, config.privateOrigin);
   }
 
   if (url.pathname === "/api/assets") {
@@ -402,7 +370,7 @@ async function route(
 
   const privacyRoute = url.pathname.match(/^\/api\/assets\/([^/]+)\/(visibility|secret|expiry)$/);
   if (privacyRoute !== null && assetIdPattern.test(privacyRoute[1])) {
-    const asset = await findAsset(env, privacyRoute[1]);
+    const asset = await findAsset(env.DB, privacyRoute[1]);
     if (asset === null || asset.state === "deleted") return error("not_found", 404);
     if (isPast(asset.hard_expires_at)) {
       await deleteAsset(env, asset.id);
@@ -413,10 +381,11 @@ async function route(
       env.DB,
       asset,
       privacyRoute[2] as "visibility" | "secret" | "expiry",
+      config.shareOrigin,
     );
     if (response !== null) {
       if (privacyRoute[2] === "expiry" && response.ok) {
-        const updated = await findAsset(env, asset.id);
+        const updated = await findAsset(env.DB, asset.id);
         if (updated !== null && isPast(updated.hard_expires_at)) await deleteAsset(env, asset.id);
         else if (updated?.cleanup_pending === 1) await cleanupAssetPage(env, asset.id);
       }
@@ -425,8 +394,7 @@ async function route(
   }
 
   if (request.method === "GET" && /^\/(latest|assets\/)/.test(url.pathname)) {
-    url.hostname = PRIVATE_HOST;
-    return Response.redirect(url.toString(), 302);
+    return Response.redirect(`${config.privateOrigin}${url.pathname}${url.search}`, 302);
   }
 
   return error("not_found", 404);

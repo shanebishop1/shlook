@@ -19,6 +19,10 @@ shlook delete <asset-id> --json
 shlook verify <asset-id> --json
 ```
 
+`setup --plan` only reports packaged assumptions. `setup --apply` does not create D1 or R2,
+DNS/custom domains, three Worker names, Access applications or policies, or service tokens;
+use the manual operator checklist in `setup.md`.
+
 Publish accepts one HTML file, one raster image, or one static directory. It
 rejects symlinks, traversal, non-regular files, missing entrypoints, and more than
 500 files. A directory defaults to `index.html`; a single file uses its filename.

@@ -1,0 +1,85 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": "node_modules/shlook/src/index.ts",
+  "compatibility_date": "2026-08-26",
+  "account_id": "<cloudflare-account-id>",
+  "workers_dev": false,
+  "preview_urls": false,
+  "env": {
+    "owner": {
+      "name": "shlook-owner",
+      "workers_dev": true,
+      "vars": {
+        "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
+        "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
+        "SHLOOK_OWNER_EMAIL": "<owner-email>",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "<database-name>",
+          "database_id": "<database-id>",
+          "migrations_dir": "node_modules/shlook/migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "ASSETS",
+          "bucket_name": "<private-bucket-name>",
+        },
+      ],
+      "triggers": {
+        "crons": ["*/5 * * * *"],
+      },
+    },
+    "private": {
+      "name": "shlook-private",
+      "workers_dev": true,
+      "vars": {
+        "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
+        "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
+        "SHLOOK_OWNER_EMAIL": "<owner-email>",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "<database-name>",
+          "database_id": "<database-id>",
+          "migrations_dir": "node_modules/shlook/migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "ASSETS",
+          "bucket_name": "<private-bucket-name>",
+        },
+      ],
+    },
+    "share": {
+      "name": "shlook-share",
+      "workers_dev": true,
+      "vars": {
+        "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
+        "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
+        "SHLOOK_OWNER_EMAIL": "<owner-email>",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "<database-name>",
+          "database_id": "<database-id>",
+          "migrations_dir": "node_modules/shlook/migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "ASSETS",
+          "bucket_name": "<private-bucket-name>",
+        },
+      ],
+    },
+  },
+}

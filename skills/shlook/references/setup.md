@@ -1,34 +1,116 @@
 # Setup
 
-Required runtime: Node.js 24 or later.
+Required runtime: Node.js 24 or later. Install the released CLI with
+`npm install --global shlook`. In a source checkout, run `pnpm build:cli` and use
+`./dist/cli.js`.
 
-Install the released CLI with `npm install --global shlook`. In a shlook source
-checkout, run `pnpm build:cli` and use `./dist/cli.js` for local verification.
+## Package values and operator values
 
-Owner API commands require:
+The package owns the Worker entry point, migrations, route grammar, and binding names `DB` and
+`ASSETS`. The operator owns every Cloudflare resource name, hostname, ID, credential, and
+email address. Keep those values in an operator-controlled Wrangler configuration and secret
+store; do not add them to package files.
 
-- `CF_ACCESS_CLIENT_ID`
-- `CF_ACCESS_CLIENT_SECRET`
+Record these values before deploying:
 
-`SHLOOK_API_ORIGIN` may override `https://show.shane-bishop.com` for a controlled
-environment. `SHLOOK_PRIVATE_ORIGIN` independently overrides
-`https://private.show.shane-bishop.com` for private artifact verification.
+| Value           | Example placeholder                        |
+| --------------- | ------------------------------------------ |
+| Account         | `<cloudflare-account-id>`                  |
+| D1              | `<database-name>` and `<database-id>`      |
+| R2              | `<private-bucket-name>`                    |
+| Owner surface   | `<owner-worker-name>` / `<owner-host>`     |
+| Private surface | `<private-worker-name>` / `<private-host>` |
+| Share surface   | `<share-worker-name>` / `<share-host>`     |
+| Human identity  | `<owner-email>`                            |
+| Agent identity  | `<access-service-token-id>` and secret     |
 
-When `shlook auth check --json` shows that infrastructure is not ready, start
-with the read-only plan:
+Create a dedicated operator directory and install the package locally so Wrangler can resolve
+the package-owned Worker and migrations:
 
 ```bash
-shlook setup --plan --json
+mkdir shlook-deploy && cd shlook-deploy
+npm init -y
+npm install shlook
+cp node_modules/shlook/examples/wrangler.custom-domains.jsonc wrangler.jsonc
+# Or, without a domain:
+cp node_modules/shlook/examples/wrangler.workers-dev.jsonc wrangler.jsonc
 ```
 
-The plan is read-only and describes the Worker, D1 database, R2 bucket, three
-hosts, and Access policy. Review its inspection results before applying. An
-unresolved inspection is a conflict; apply refuses to run while any conflict
-remains.
+Replace every angle-bracket placeholder before running Wrangler. Never edit the installed
+package under `node_modules`.
 
-`shlook setup --apply --json` runs only the Wrangler version, configuration,
-migrations, and Worker source shipped in the installed `shlook` package. It does
-not use the caller's project or Wrangler installation. Access application, owner
-policy, service-token policy, DNS, and custom-domain work remain explicitly
-`blocked` until the E5 live gate is available. A blocked result is emitted as
-top-level `ok:false` on stderr with exit code 2; it is not setup success.
+## Manual deployment checklist
+
+The package does not automate this checklist.
+
+1. Authenticate Wrangler to the operator's Cloudflare account.
+2. Create one D1 database and one R2 bucket. Keep R2 private: do not enable `r2.dev` or attach
+   a public custom domain. Wrangler can create them with:
+
+   ```bash
+   npx wrangler d1 create <database-name>
+   npx wrangler r2 bucket create <private-bucket-name>
+   ```
+
+   Copy the returned D1 ID into every database binding in `wrangler.jsonc`.
+
+3. In the operator Wrangler configuration, bind the same database as `DB` and bucket as
+   `ASSETS` for all three surfaces. Point D1 migrations at the package's `migrations/`
+   directory. Set all four Worker variables in every deployment/environment:
+   `SHLOOK_OWNER_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, `SHLOOK_SHARE_ORIGIN`, and
+   `SHLOOK_OWNER_EMAIL`. Wrangler `vars` and bindings do not inherit into named environments,
+   so the no-domain template repeats them intentionally.
+4. Apply all D1 migrations remotely before deployment:
+
+   ```bash
+   # Custom-domain template:
+   npx wrangler d1 migrations apply <database-name> --remote --config <operator-config>
+
+   # workers.dev template (the same database is shared by all three environments):
+   npx wrangler d1 migrations apply <database-name> --remote --config <operator-config> --env owner
+   ```
+
+5. Deploy three isolated origins:
+   - **With a domain:** route the owner, private, and share surfaces to three distinct
+     hostnames. Turn off `workers.dev` and preview URLs for protected deployments.
+   - **Without a domain:** deploy three distinct Worker names with `workers_dev` enabled. Use
+     their three production `workers.dev` URLs as the origins.
+
+   The packaged templates support these commands:
+
+   ```bash
+   # One Worker with three custom domains:
+   npx wrangler deploy --config wrangler.jsonc
+
+   # Three workers.dev Workers:
+   npx wrangler deploy --config wrangler.jsonc --env owner
+   npx wrangler deploy --config wrangler.jsonc --env private
+   npx wrangler deploy --config wrangler.jsonc --env share
+   ```
+
+6. Configure Cloudflare Access only on the owner and private origins. Add an Allow policy for
+   exactly `<owner-email>` and a Service Auth policy containing the agent service token. Do
+   not protect the share origin with Access. In custom-domain mode, create hostname-scoped
+   self-hosted Access applications for the owner and private hostnames. Do not enable the
+   dashboard's Worker-wide **Protect this Worker** control on the shared Worker, because that
+   would also challenge the public share hostname.
+7. Give the agent the service-token credentials and all three origins:
+
+   ```bash
+   export CF_ACCESS_CLIENT_ID="<access-service-token-client-id>"
+   export CF_ACCESS_CLIENT_SECRET="<access-service-token-client-secret>"
+   export SHLOOK_API_ORIGIN="https://<owner-host>"
+   export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
+   export SHLOOK_SHARE_ORIGIN="https://<share-host>"
+   ```
+
+   Use each URL's origin only: HTTPS scheme plus hostname, with no path.
+
+8. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
+
+## About `shlook setup`
+
+`shlook setup --plan --json` reports the portable topology and currently supplied origins; it
+is not a remote Cloudflare discovery or provisioning tool. `shlook setup --apply --json`
+refuses mutation and points back to this checklist. Use an operator-owned configuration so an
+installed package can never deploy another operator's account, resource IDs, or hostnames.
