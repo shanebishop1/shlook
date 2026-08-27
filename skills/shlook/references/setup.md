@@ -2,6 +2,9 @@
 
 Required runtime: Node.js 24 or later.
 
+Install the released CLI with `npm install --global shlook`. In a shlook source
+checkout, run `pnpm build:cli` and use `./dist/cli.js` for local verification.
+
 Owner API commands require:
 
 - `CF_ACCESS_CLIENT_ID`
@@ -11,7 +14,8 @@ Owner API commands require:
 environment. `SHLOOK_PRIVATE_ORIGIN` independently overrides
 `https://private.show.shane-bishop.com` for private artifact verification.
 
-Always start with:
+When `shlook auth check --json` shows that infrastructure is not ready, start
+with the read-only plan:
 
 ```bash
 shlook setup --plan --json

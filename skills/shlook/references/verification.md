@@ -9,10 +9,14 @@ or unauthenticated audiences.
 Perform intended-audience checks separately, using a client with the credentials
 appropriate to that audience, and record those results independently:
 
-- Private: unauthenticated share-host access returns `404`.
-- Public: the stable share URL loads without Access.
+- Private URL: `https://private.show.shane-bishop.com/assets/<asset-id>/`.
+- Public URL: `https://share.shane-bishop.com/assets/<asset-id>/`.
+- Private publication: authenticated private access succeeds and the public URL
+  returns `404` without Access.
+- Public: the public URL loads without Access.
 - Secret link: the current capability loads; a rotated or revoked capability
-  returns `404`.
+  returns `404`. Use only the one-time URL returned by `secret create|rotate`;
+  never reconstruct or log it.
 - Share expiry: share access returns `404` while private owner access remains.
 - Hard expiry or deletion: all access returns `404`.
 

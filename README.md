@@ -25,7 +25,7 @@ inspection, archive listing, latest/direct views, and exact-one-asset deletion.
 Uploads remain hidden until every manifest file is durable and the asset enters
 the `live` state.
 
-Current API routes:
+Current owner and API routes:
 
 - `POST /api/assets` creates an uploading asset.
 - `PUT /api/assets/:id/files/:path` uploads one regular file.
@@ -35,8 +35,10 @@ Current API routes:
 - `POST` or `DELETE /api/assets/:id/secret` rotates or revokes a capability URL.
 - `GET /latest` and `GET /assets/:id/` serve live content.
 - `DELETE /api/assets/:id` deletes one asset and its scoped objects.
+- `GET /` and `GET /archive` render the responsive owner archive and lifecycle
+  controls.
 
-Planned host boundaries:
+Host boundaries:
 
 - `show.shane-bishop.com`: owner UI and agent API behind Cloudflare Access.
 - `private.show.shane-bishop.com`: owner-authenticated private artifacts.
