@@ -5,6 +5,11 @@
   "compatibility_date": "2026-08-26",
   "account_id": "ca9ee30a816f2f92657c7e6b3b595ee2",
   "workers_dev": false,
+  "routes": [
+    { "pattern": "show.shane-bishop.com", "custom_domain": true },
+    { "pattern": "private.show.shane-bishop.com", "custom_domain": true },
+    { "pattern": "share.shane-bishop.com", "custom_domain": true },
+  ],
   "d1_databases": [
     {
       "binding": "DB",

@@ -1,7 +1,6 @@
 {
   "name": "shlook",
   "version": "0.1.0",
-  "private": true,
   "description": "Private-by-default artifact hosting for agents",
   "license": "MIT",
   "author": "Shane Bishop",
@@ -26,6 +25,10 @@
     "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
   "scripts": {
     "build": "pnpm build:worker && pnpm build:cli",
     "build:cli": "tsc --strict --skipLibCheck --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --rewriteRelativeImportExtensions --outDir dist src/cli-files.ts src/cli.ts",

@@ -451,6 +451,11 @@ describe("privacy and lifecycle", () => {
     await env.ASSETS.put(`assets/${asset.id}/manifests/late.json`, "late");
     await cleanupExpired(env);
     expect((await env.ASSETS.list({ prefix: `assets/${asset.id}/` })).objects).toHaveLength(0);
+    await cleanupExpired(env);
+    const cleaned = await env.DB.prepare("SELECT cleanup_pending FROM assets WHERE id = ?")
+      .bind(asset.id)
+      .first<{ cleanup_pending: number }>();
+    expect(cleaned?.cleanup_pending).toBe(0);
 
     const stale = await createLiveAsset("stale mutation");
     await env.DB.prepare("UPDATE assets SET hard_expires_at = ? WHERE id = ?")

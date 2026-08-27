@@ -8,8 +8,8 @@ interface CleanupEnv {
 export async function cleanupAssetPage(env: CleanupEnv, id: string): Promise<void> {
   const page = await env.ASSETS.list({ prefix: assetPrefix(id), limit: 1000 });
   if (page.objects.length > 0) await env.ASSETS.delete(page.objects.map((object) => object.key));
-  await env.DB.prepare("UPDATE assets SET cleanup_pending = 1, cleanup_checked_at = ? WHERE id = ?")
-    .bind(new Date().toISOString(), id)
+  await env.DB.prepare("UPDATE assets SET cleanup_pending = ?, cleanup_checked_at = ? WHERE id = ?")
+    .bind(page.objects.length === 0 ? 0 : 1, new Date().toISOString(), id)
     .run();
 }
 

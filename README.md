@@ -1,7 +1,7 @@
 # shlook
 
 Private-by-default Cloudflare hosting for agent-created HTML, static sites, and
-images. The project is under active development and is not deployed yet.
+images. The service is deployed while release acceptance remains in progress.
 
 ## Development
 
