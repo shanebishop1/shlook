@@ -1,5 +1,7 @@
 export interface AssetRow {
   id: string;
+  name: string;
+  description: string | null;
   state: "uploading" | "finalizing" | "live" | "deleted";
   visibility: "private" | "secret_link" | "public";
   upload_count: number;
@@ -16,7 +18,7 @@ export interface AssetRow {
 }
 
 export const assetColumns =
-  "id, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, " +
+  "id, name, description, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, " +
   "secret_hash, share_expires_at, hard_expires_at, cleanup_pending, cleanup_checked_at, " +
   "created_at, updated_at";
 

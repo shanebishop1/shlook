@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { normalizeAssetMetadata } from "./asset-metadata.ts";
 import {
   inspectPackagedSetup,
   loadPublishInput,
@@ -37,6 +38,8 @@ interface CliOptions {
   plan?: boolean;
   apply?: boolean;
   entrypoint?: string;
+  name?: string;
+  description?: string;
   offset?: string;
 }
 
@@ -93,6 +96,8 @@ function parse(argv: string[]): { positionals: string[]; options: CliOptions } {
         plan: { type: "boolean" },
         apply: { type: "boolean" },
         entrypoint: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
         offset: { type: "string" },
       },
     });
@@ -246,9 +251,18 @@ function encodedPath(path: string): string {
 async function publish(
   dependencies: CliDependencies,
   path: string | undefined,
+  nameValue: string | undefined,
+  descriptionValue: string | undefined,
   entrypoint?: string,
 ): Promise<unknown> {
   if (path === undefined) throw new CliError("usage_error", "publish requires a file or directory");
+  const metadata = normalizeAssetMetadata(nameValue, descriptionValue);
+  if (metadata === null) {
+    throw new CliError(
+      "usage_error",
+      "publish requires --name with 1-80 characters; --description accepts up to 500 characters",
+    );
+  }
   let input: PublishInput;
   try {
     input = await (dependencies.loadPublishInput ?? loadPublishInput)(path, entrypoint);
@@ -258,7 +272,9 @@ async function publish(
       cause instanceof Error ? cause.message : "invalid publish input",
     );
   }
-  const created = (await api(dependencies, "/api/assets", "POST")) as { asset?: { id?: unknown } };
+  const created = (await api(dependencies, "/api/assets", "POST", metadata)) as {
+    asset?: { id?: unknown };
+  };
   const id = created.asset?.id;
   if (typeof id !== "string" || !assetIdPattern.test(id))
     throw new CliError("invalid_api_response", "create response did not include an asset ID");
@@ -348,7 +364,16 @@ async function dispatch(
   }
   if (command === "status") return { command, data: await api(dependencies, "/health") };
   if (command === "publish")
-    return { command, data: await publish(dependencies, args[0], options.entrypoint) };
+    return {
+      command,
+      data: await publish(
+        dependencies,
+        args[0],
+        options.name,
+        options.description,
+        options.entrypoint,
+      ),
+    };
   if (command === "list") {
     const offset =
       options.offset === undefined ? "" : `?offset=${encodeURIComponent(options.offset)}`;

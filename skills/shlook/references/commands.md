@@ -8,7 +8,7 @@ Use `--json` for agent-consumed calls. Success uses
 shlook auth check --json
 shlook setup --plan|--apply --json
 shlook status --json
-shlook publish <path> [--entrypoint <relative-path>] --json
+shlook publish <path> --name <short-name> [--description <text>] [--entrypoint <relative-path>] --json
 shlook list [--offset <n>] --json
 shlook show <asset-id> --json
 shlook visibility <asset-id> private|secret_link|public --json
@@ -23,6 +23,10 @@ shlook verify <asset-id> --json
 DNS/custom domains, three Worker names, Access applications or policies, or service tokens;
 use the manual operator checklist in `setup.md`.
 
-Publish accepts one HTML file, one raster image, or one static directory. It
-rejects symlinks, traversal, non-regular files, missing entrypoints, and more than
-500 files. A directory defaults to `index.html`; a single file uses its filename.
+Publish requires a human-readable name of 1-80 characters. The optional description accepts
+up to 500 characters. Both values are trimmed, stored with the asset, returned by `list` and
+`show`, and displayed and searched in the owner archive.
+
+Publish accepts one HTML file, one raster image, or one static directory. It rejects symlinks,
+traversal, non-regular files, missing entrypoints, and more than 500 files. A directory defaults
+to `index.html`; a single file uses its filename.

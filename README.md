@@ -61,6 +61,31 @@ Do not rely on package defaults for a self-hosted installation. See
 operator checklist. The packaged `shlook setup` command does not create D1, R2, DNS,
 Worker routes, Access applications, policies, or service tokens.
 
+## Publish an artifact
+
+Every new publication has a concise display name and may have a description:
+
+```bash
+shlook publish ./artifact \
+  --name "Owner archive refinement" \
+  --description "Responsive archive controls and theme study" \
+  --json
+```
+
+Names are required by the current CLI and accept 1-80 characters. Descriptions are optional
+and accept up to 500 characters. Both are stored in D1, returned by the owner API, and shown
+and searched in the owner archive. Existing assets are assigned their prior eight-character ID
+prefix when the metadata migration is applied.
+
+The creation API accepts the same metadata as JSON:
+
+```json
+{
+  "name": "Owner archive refinement",
+  "description": "Responsive archive controls and theme study"
+}
+```
+
 ## Route grammar
 
 - Owner: `/`, `/archive`, `/health`, and `/api/assets...`

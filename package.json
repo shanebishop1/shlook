@@ -17,6 +17,7 @@
     "migrations",
     "skills",
     "src/artifact.ts",
+    "src/asset-metadata.ts",
     "src/asset-store.ts",
     "src/cleanup.ts",
     "src/index.ts",

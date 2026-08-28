@@ -15,7 +15,9 @@ infer artifact content in this skill.
 2. Run `shlook auth check --json`.
 3. If infrastructure is not ready, stop and read `references/setup.md`. Setup is an
    operator-owned manual process; do not claim that `shlook setup` provisions Cloudflare.
-4. Run `shlook publish <path> --json`. Publication defaults private.
+4. Choose a concise, human-readable asset name and run
+   `shlook publish <path> --name "<short name>" [--description "<what it is>"] --json`.
+   Publication defaults private.
 5. Run `shlook verify <asset-id> --json` to verify owner metadata and the authenticated private
    URL. Before reporting a public or capability URL, perform the separate audience checks in
    `references/verification.md`.

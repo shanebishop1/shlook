@@ -25,11 +25,43 @@ beforeEach(async () => {
 
 describe("asset publication", () => {
   it("creates a private non-servable asset", async () => {
-    const asset = await createAsset();
+    const asset = await createAsset("  Release preview  ", "  Owner UI refinement  ");
 
-    expect(asset).toMatchObject({ state: "uploading", visibility: "private" });
+    expect(asset).toMatchObject({
+      name: "Release preview",
+      description: "Owner UI refinement",
+      state: "uploading",
+      visibility: "private",
+    });
     expect(asset.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(Date.parse(asset.createdAt)).not.toBeNaN();
+    await expect(
+      env.DB.prepare("SELECT name, description FROM assets WHERE id = ?").bind(asset.id).first(),
+    ).resolves.toEqual({ name: "Release preview", description: "Owner UI refinement" });
+  });
+
+  it("validates asset metadata while preserving bodyless client compatibility", async () => {
+    const invalid = [
+      { name: "   " },
+      { name: "x".repeat(81) },
+      { name: "Valid", description: "x".repeat(501) },
+      { name: 42 },
+    ];
+    for (const body of invalid) {
+      const response = await request("/api/assets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "invalid_asset_metadata" });
+    }
+
+    const legacy = await request("/api/assets", { method: "POST" });
+    expect(legacy.status).toBe(201);
+    const legacyBody = (await legacy.json()) as { asset: AssetJson };
+    expect(legacyBody.asset.name).toBe(legacyBody.asset.id.slice(0, 8));
+    expect(legacyBody.asset.description).toBeNull();
   });
 
   it("hides uploading assets from archive, latest, and direct views", async () => {
@@ -119,8 +151,8 @@ describe("asset publication", () => {
   });
 
   it("inspects one asset and lists the live archive newest first", async () => {
-    const first = await createLiveAsset("first");
-    const second = await createLiveAsset("second");
+    const first = await createLiveAsset("first", "First concept", "Quiet archive direction");
+    const second = await createLiveAsset("second", "Second concept");
     await env.DB.batch([
       env.DB.prepare("UPDATE assets SET created_at = ? WHERE id = ?").bind(
         "2026-08-26T01:00:00.000Z",
@@ -136,10 +168,37 @@ describe("asset publication", () => {
     const archive = await request("/api/assets");
 
     await expect(inspected.json()).resolves.toMatchObject({
-      asset: { id: first.id, state: "live" },
+      asset: {
+        id: first.id,
+        name: "First concept",
+        description: "Quiet archive direction",
+        state: "live",
+      },
     });
     const body = (await archive.json()) as { assets: AssetJson[] };
     expect(body.assets.map((asset) => asset.id)).toEqual([second.id, first.id]);
+    expect(body.assets.map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: "Second concept", description: null },
+      { name: "First concept", description: "Quiet archive direction" },
+    ]);
+  });
+
+  it("backfills names when upgrading a populated database", async () => {
+    await reset();
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS.slice(0, 3));
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      "INSERT INTO assets (id, state, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(id, "live", "private", now, now)
+      .run();
+
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS.slice(3));
+
+    await expect(
+      env.DB.prepare("SELECT name, description FROM assets WHERE id = ?").bind(id).first(),
+    ).resolves.toEqual({ name: id.slice(0, 8), description: null });
   });
 
   it("serves direct entrypoint and nested files with stored metadata", async () => {

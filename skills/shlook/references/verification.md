@@ -9,6 +9,9 @@ lifecycle changes. It performs two authenticated checks: owner metadata must rep
 and a `GET` of the private artifact entrypoint must succeed. It does not test public,
 secret-link, expired, deleted, or unauthenticated audiences.
 
+Use `shlook show <asset-id> --json` to confirm that `name` and optional `description` match the
+values supplied at publication.
+
 Perform audience checks separately with credentials appropriate to each audience:
 
 - Private URL: `${SHLOOK_PRIVATE_ORIGIN}/assets/<asset-id>/`.

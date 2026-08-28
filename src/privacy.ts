@@ -53,6 +53,8 @@ export interface PrivacyAsset {
 }
 
 export interface PublicAsset extends PrivacyAsset {
+  name: string;
+  description: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +62,8 @@ export interface PublicAsset extends PrivacyAsset {
 export function assetJson(row: PublicAsset) {
   return {
     id: row.id,
+    name: row.name,
+    description: row.description,
     state: row.state,
     visibility: row.visibility,
     shareExpiresAt: row.share_expires_at,

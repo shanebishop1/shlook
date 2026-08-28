@@ -8,6 +8,7 @@ import {
   uploadKey,
   validateManifest,
 } from "./artifact";
+import { normalizeAssetMetadata } from "./asset-metadata";
 import { assetColumns, findAsset, latestAsset, type AssetRow } from "./asset-store";
 import { cleanupAssetPage, cleanupExpired, deleteAsset } from "./cleanup";
 import { ownerPage } from "./owner-ui";
@@ -39,19 +40,39 @@ function error(code: string, status: number): Response {
   return json({ error: code }, status);
 }
 
-async function createAsset(env: Env): Promise<Response> {
+async function createAsset(request: Request, env: Env): Promise<Response> {
   const id = crypto.randomUUID();
+  let metadata;
+  if (request.body === null) {
+    metadata = { name: id.slice(0, 8), description: null };
+  } else {
+    let body: unknown;
+    try {
+      body = await readJsonWithin(request, 4 * 1024);
+    } catch {
+      return error("invalid_asset_metadata", 400);
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return error("invalid_asset_metadata", 400);
+    }
+    const values = body as Record<string, unknown>;
+    metadata = normalizeAssetMetadata(values.name, values.description);
+    if (metadata === null) return error("invalid_asset_metadata", 400);
+  }
   const now = new Date().toISOString();
   await env.DB.prepare(
-    "INSERT INTO assets (id, state, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO assets (id, name, description, state, visibility, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(id, "uploading", "private", now, now)
+    .bind(id, metadata.name, metadata.description, "uploading", "private", now, now)
     .run();
 
   return json(
     {
       asset: assetJson({
         id,
+        name: metadata.name,
+        description: metadata.description,
         state: "uploading",
         visibility: "private",
         upload_count: 0,
@@ -344,7 +365,7 @@ async function route(
   }
 
   if (url.pathname === "/api/assets") {
-    if (request.method === "POST") return createAsset(env);
+    if (request.method === "POST") return createAsset(request, env);
     if (request.method === "GET") return listAssets(request, env);
   }
 

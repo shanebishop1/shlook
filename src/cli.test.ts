@@ -33,7 +33,7 @@ function harness(overrides: Partial<CliDependencies> = {}) {
       for (let index = 0; index < argv.length; index += 1) {
         const value = argv[index];
         if (["--json", "--plan", "--apply"].includes(value)) options[value.slice(2)] = true;
-        else if (["--entrypoint", "--offset"].includes(value))
+        else if (["--entrypoint", "--offset", "--name", "--description"].includes(value))
           options[value.slice(2)] = argv[++index];
         else positionals.push(value);
       }
@@ -186,7 +186,25 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
   });
   const context = harness({ fetch, loadPublishInput });
 
-  expect(await runCli(["publish", directory, "--json"], context.dependencies)).toBe(0);
+  expect(
+    await runCli(
+      [
+        "publish",
+        directory,
+        "--name",
+        "Release preview",
+        "--description",
+        "Owner archive refinement",
+        "--json",
+      ],
+      context.dependencies,
+    ),
+  ).toBe(0);
+  const create = fetch.mock.calls.find(([url]) => String(url).endsWith("/api/assets"));
+  expect(JSON.parse(String(create?.[1]?.body))).toEqual({
+    name: "Release preview",
+    description: "Owner archive refinement",
+  });
   const finalize = fetch.mock.calls.find(([url]) => String(url).endsWith("/finalize"));
   expect(JSON.parse(String(finalize?.[1]?.body))).toEqual({
     entrypoint: "index.html",
@@ -200,7 +218,12 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
       throw new Error("publish input or an ancestor is a symbolic link");
     }),
   });
-  expect(await runCli(["publish", "/linked-artifact", "--json"], rejected.dependencies)).toBe(1);
+  expect(
+    await runCli(
+      ["publish", "/linked-artifact", "--name", "Linked artifact", "--json"],
+      rejected.dependencies,
+    ),
+  ).toBe(1);
   expect(fetch).toHaveBeenCalledTimes(3);
   expect(JSON.parse(rejected.stderr[0]).error.code).toBe("unsafe_publish_input");
 
@@ -212,13 +235,29 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
     .mockResolvedValueOnce(Response.json({ error: "upload_failed" }, { status: 500 }))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
   const failed = harness({ fetch: failedFetch, loadPublishInput });
-  expect(await runCli(["publish", directory, "--json"], failed.dependencies)).toBe(1);
+  expect(
+    await runCli(["publish", directory, "--name", "Failed preview", "--json"], failed.dependencies),
+  ).toBe(1);
   expect(failedFetch.mock.calls[2][0]).toBe(`${DEFAULT_ORIGIN}/api/assets/${assetId}`);
   expect(failedFetch.mock.calls[2][1]?.method).toBe("DELETE");
   expect(JSON.parse(failed.stderr[0]).error).toMatchObject({
     code: "publish_failed",
     details: { assetId, cleanup: { attempted: true, succeeded: true } },
   });
+});
+
+test("publish requires a bounded short name before reading files or calling the API", async () => {
+  for (const argv of [
+    ["publish", "/artifact", "--json"],
+    ["publish", "/artifact", "--name", "   ", "--json"],
+    ["publish", "/artifact", "--name", "x".repeat(81), "--json"],
+  ]) {
+    const context = harness({ loadPublishInput: vi.fn() });
+    expect(await runCli(argv, context.dependencies)).toBe(1);
+    expect(context.dependencies.loadPublishInput).not.toHaveBeenCalled();
+    expect(context.dependencies.fetch).not.toHaveBeenCalled();
+    expect(JSON.parse(context.stderr[0]).error.code).toBe("usage_error");
+  }
 });
 
 test("maps visibility, secret, expiry, and delete commands to the owner API", async () => {

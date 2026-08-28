@@ -41,9 +41,17 @@ describe("worker bootstrap", () => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     await env.DB.prepare(
-      "INSERT INTO assets (id, state, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO assets (id, name, description, state, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind(id, "live", "private", now, now)
+      .bind(
+        id,
+        "Forest <release>",
+        "A calm & searchable archive entry",
+        "live",
+        "private",
+        now,
+        now,
+      )
       .run();
     const response = await request("/");
     const body = await response.text();
@@ -58,6 +66,9 @@ describe("worker bootstrap", () => {
       "img-src https://private.example.com",
     );
     expect(body).toContain(id);
+    expect(body).toContain("Forest &lt;release&gt;");
+    expect(body).toContain("A calm &amp; searchable archive entry");
+    expect(body).not.toContain("Forest <release>");
     expect(body).toContain(`https://private.example.com/assets/${id}/`);
     expect(body).toContain('class="ledger"');
     expect(body).toContain('class="preview-frame"');
@@ -66,6 +77,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain('sandbox="allow-same-origin"');
     expect(body).toContain("data-inspect");
     expect(body).toContain("data-search");
+    expect(body).toContain("data-search-text");
+    expect(body).toContain("row.dataset.search=row.dataset.searchText+' '+value");
     expect(body).toContain("data-row-visibility");
     expect(body).toContain("data-filter-option");
     expect(body).toContain('aria-haspopup="listbox"');
@@ -79,6 +92,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain("card.dataset.detail+path");
     expect(body).not.toContain("card.dataset.id+path");
     expect(body).toContain("Artifact archive");
+    expect(body).toContain('placeholder="Search name, description, or ID"');
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
     expect(body).not.toContain("Hard expires");

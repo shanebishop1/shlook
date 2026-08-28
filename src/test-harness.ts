@@ -15,6 +15,8 @@ const worker = handleRequest as (
 
 export interface AssetJson {
   id: string;
+  name: string;
+  description: string | null;
   state: "uploading" | "finalizing" | "live";
   visibility: "private";
   createdAt: string;
@@ -56,8 +58,15 @@ export async function request(
   );
 }
 
-export async function createAsset(): Promise<AssetJson> {
-  const response = await request("/api/assets", { method: "POST" });
+export async function createAsset(
+  name = "Test artifact",
+  description: string | null = null,
+): Promise<AssetJson> {
+  const response = await request("/api/assets", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
   const body = (await response.json()) as { asset: AssetJson };
   return body.asset;
 }
@@ -92,8 +101,12 @@ export function finalizeAsset(
   });
 }
 
-export async function createLiveAsset(contents: string): Promise<AssetJson> {
-  const asset = await createAsset();
+export async function createLiveAsset(
+  contents: string,
+  name = "Test artifact",
+  description: string | null = null,
+): Promise<AssetJson> {
+  const asset = await createAsset(name, description);
   const upload = await uploadFile(asset.id, "index.html", contents, "text/html");
   expect(upload.status).toBe(201);
   expect((await finalizeAsset(asset.id, [await uploadedFile(upload)])).status).toBe(200);
