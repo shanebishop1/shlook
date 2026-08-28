@@ -54,10 +54,15 @@ describe("worker bootstrap", () => {
     expect(response.headers.get("content-security-policy")).toContain(
       "frame-src https://private.example.com",
     );
+    expect(response.headers.get("content-security-policy")).toContain(
+      "img-src https://private.example.com",
+    );
     expect(body).toContain(id);
     expect(body).toContain(`https://private.example.com/assets/${id}/`);
     expect(body).toContain('class="ledger"');
     expect(body).toContain('class="preview-frame"');
+    expect(body).toContain("data-preview-image");
+    expect(body).toContain("data-preview-fallback");
     expect(body).toContain('sandbox="allow-same-origin"');
     expect(body).toContain("data-inspect");
     expect(body).toContain("data-search");
