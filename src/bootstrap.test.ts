@@ -76,6 +76,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Artifact expiration");
     expect(body).toContain("Clear expirations");
     expect(body).toContain("Artifact no longer exists. Refreshing...");
+    expect(body).toContain("card.dataset.detail+path");
+    expect(body).not.toContain("card.dataset.id+path");
     expect(body).toContain("Artifact archive");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
