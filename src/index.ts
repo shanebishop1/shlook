@@ -340,7 +340,7 @@ async function route(
   }
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/archive")) {
-    return ownerPage(request, env.DB, config.privateOrigin);
+    return ownerPage(request, env.DB, config.privateOrigin, config.shareOrigin);
   }
 
   if (url.pathname === "/api/assets") {

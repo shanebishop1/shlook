@@ -51,7 +51,18 @@ describe("worker bootstrap", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(response.headers.get("content-security-policy")).toContain(
+      "frame-src https://private.example.com",
+    );
     expect(body).toContain(id);
     expect(body).toContain(`https://private.example.com/assets/${id}/`);
+    expect(body).toContain('class="ledger"');
+    expect(body).toContain('class="preview-frame"');
+    expect(body).toContain('sandbox="allow-same-origin"');
+    expect(body).toContain("data-inspect");
+    expect(body).toContain("data-search");
+    expect(body).toContain("Artifact archive");
+    expect(body).not.toContain("Latest transmission");
+    expect(body).not.toContain("No live artifacts in the ledger.");
   });
 });
