@@ -17,6 +17,7 @@ export default defineConfig(async () => {
             SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
             SHLOOK_SHARE_ORIGIN: "https://share.example.com",
             SHLOOK_OWNER_EMAIL: "owner@example.com",
+            SHLOOK_SECRET_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
           },
         },
       }),

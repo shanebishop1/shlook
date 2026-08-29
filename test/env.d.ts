@@ -6,6 +6,7 @@ declare namespace Cloudflare {
     SHLOOK_OWNER_ORIGIN: string;
     SHLOOK_PRIVATE_ORIGIN: string;
     SHLOOK_SHARE_ORIGIN: string;
+    SHLOOK_SECRET_ENCRYPTION_KEY: string;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];
   }
 }

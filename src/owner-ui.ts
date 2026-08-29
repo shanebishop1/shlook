@@ -1,13 +1,23 @@
+import { hashSecret } from "./privacy";
+import { decryptSecret } from "./secret-crypto";
+
 interface OwnerAsset {
   id: string;
   name: string;
   description: string | null;
   visibility: "private" | "secret_link" | "public";
   has_secret: number;
+  secret_url: string | null;
   share_expires_at: string | null;
   hard_expires_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface OwnerAssetRow extends Omit<OwnerAsset, "has_secret" | "secret_url"> {
+  secret_hash: string | null;
+  secret_ciphertext: string | null;
+  secret_iv: string | null;
 }
 
 const pageSize = 24;
@@ -53,6 +63,10 @@ function visibilityLabel(value: string): string {
   return value.replace("_", " ").replace(/^./, (character) => character.toUpperCase());
 }
 
+function copyIcon(): string {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
+}
+
 function visibilityMenu(asset: OwnerAsset, location: "row" | "panel"): string {
   const options = (["private", "secret_link", "public"] as const)
     .map((visibility) => {
@@ -77,7 +91,17 @@ function assetRows(
     `${asset.id} ${asset.name} ${asset.description ?? ""}`.toLowerCase(),
   );
   const privateUrl = `${privateOrigin}/assets/${id}/`;
-  const publicUrl = asset.visibility === "public" ? `${shareOrigin}/assets/${id}/` : "";
+  const publicUrl = `${shareOrigin}/assets/${id}/`;
+  const secretUrl = asset.secret_url === null ? "" : escapeHtml(asset.secret_url);
+  const shareUrl =
+    asset.visibility === "public" ? publicUrl : asset.visibility === "secret_link" ? secretUrl : "";
+  const shareLabel =
+    shareUrl ||
+    (asset.visibility === "secret_link"
+      ? "Rotate once to recover this existing secret link"
+      : "Available when this artifact is public");
+  const rowCopyHidden = asset.visibility === "private" ? " hidden" : "";
+  const copyDisabled = shareUrl === "" ? " disabled" : "";
   const secretAction = asset.has_secret === 1 ? "rotate" : "create";
   const created = dateLabel(asset.created_at, "Unknown");
   const updated = dateLabel(asset.updated_at, "Unknown");
@@ -91,9 +115,9 @@ function assetRows(
     <td>${shareExpiry}</td>
     <td>${hardExpiry}</td>
     <td>${updated}</td>
-     <td><div class="row-action"><button class="inspect-button" type="button" data-inspect aria-expanded="false" aria-controls="detail-${id}" aria-label="Inspect ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9.5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></td>
+     <td><div class="row-action"><button class="inspect-button row-copy" type="button" data-copy-row aria-label="Copy share link for ${name}"${rowCopyHidden}${copyDisabled}>${copyIcon()}</button><button class="inspect-button" type="button" data-inspect aria-expanded="false" aria-controls="detail-${id}" aria-label="Inspect ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9.5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></td>
   </tr>
-   <tr class="detail-row" id="detail-${id}" data-detail="${id}" data-public-url="${shareOrigin}/assets/${id}/" data-has-secret="${asset.has_secret}" hidden>
+   <tr class="detail-row" id="detail-${id}" data-detail="${id}" data-public-url="${publicUrl}" data-secret-url="${secretUrl}" data-has-secret="${asset.has_secret}" hidden>
     <td colspan="7"><div class="inspector">
       <div class="large-preview">${previewMedia(privateUrl, asset.name, true)}</div>
       <div class="panel">
@@ -112,7 +136,7 @@ function assetRows(
         </div>
         <div class="control-group">
           <span class="control-label">Share link</span>
-           <div class="share-line"><span class="share-url">${publicUrl || (asset.visibility === "secret_link" ? "Rotate the secret to receive a new capability URL" : "Available when this artifact is public")}</span><button class="button icon-button" type="button" data-copy-public aria-label="Copy share link"${publicUrl ? "" : " disabled"}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></button></div>
+           <div class="share-line"><span class="share-url">${shareLabel}</span><button class="button icon-button" type="button" data-copy-public aria-label="Copy share link"${copyDisabled}>${copyIcon()}</button></div>
         </div>
         <div class="danger-line"><span>Deletion is permanent.</span><button class="button danger" type="button" data-request-delete>Delete artifact</button></div>
         <div class="confirm" data-confirm hidden><p>Delete ${name}? This cannot be undone.</p><div class="button-row"><button class="button danger" type="button" data-delete>Delete permanently</button><button class="button" type="button" data-cancel-delete>Cancel</button></div></div>
@@ -129,10 +153,10 @@ const toast=document.querySelector('[data-toast]');
 const filterMenu=document.querySelector('[data-filter-menu]');
 let toastTimer;
 const labels={private:'Private',secret_link:'Secret link',public:'Public'};
-const errorMessage=code=>code==='not_found'?'Artifact no longer exists. Refreshing...':code==='secret_required'?'Issue a secret link before selecting Secret link.':code==='asset_not_live'?'This artifact is no longer active.':code.replaceAll('_',' ');
+const errorMessage=code=>code==='not_found'?'Artifact no longer exists. Refreshing...':code==='secret_required'?'Issue a secret link before selecting Secret link.':code==='asset_not_live'?'This artifact is no longer active.':code==='secret_encryption_unavailable'?'Secret-link encryption is not configured.':code.replaceAll('_',' ');
 const setStatus=(_card,message,error=false)=>{toast.textContent=message;toast.classList.toggle('error',error);toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),error?4000:2400)};
 const reportError=(card,error)=>{setStatus(card,error.message,true);if(error.code==='not_found')setTimeout(()=>location.reload(),900)};
-const mutate=async(card,path,init)=>{setStatus(card,'Working...');const response=await fetch('/api/assets/'+card.dataset.detail+path,{...init,headers:{'content-type':'application/json',...(init.headers||{})}});let body={};try{body=await response.json()}catch{}if(!response.ok){const code=body.error||('request_failed_'+response.status);const failure=new Error(errorMessage(code));failure.code=code;throw failure}return body};
+const mutate=async(card,path,init)=>{setStatus(card,'Working...');const response=await fetch('/api/assets/'+card.dataset.detail+path,{...init,headers:{'content-type':'application/json',...(init.headers||{})}});let body={};try{body=await response.json()}catch{}if(!response.ok){const code=body.error||('request_failed_'+response.status);const failure=new Error(errorMessage(code));failure.code=code;throw failure}if(path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url;if(path==='/secret'&&init.method==='DELETE')card.dataset.secretUrl='';return body};
 const cardForId=id=>document.querySelector('[data-detail="'+id+'"]');
 const showPreviewFallback=image=>{image.hidden=true;image.parentElement.querySelector('[data-preview-fallback]').hidden=false};
 document.querySelectorAll('[data-preview-image]').forEach(image=>{image.addEventListener('error',()=>showPreviewFallback(image),{once:true});if(image.complete&&image.naturalWidth===0)showPreviewFallback(image)});
@@ -140,7 +164,9 @@ const closeMenus=except=>{document.querySelectorAll('[data-menu-list]:not([hidde
 const toggleMenu=menu=>{const list=menu.querySelector('[data-menu-list]');const open=list.hidden;closeMenus(open?list:null);list.hidden=!open;menu.querySelector('[data-menu-button]').setAttribute('aria-expanded',String(open));if(open){const selected=list.querySelector('[aria-selected="true"]:not(:disabled)')||list.querySelector('[role="option"]:not(:disabled)');selected?.focus()}};
 const setMenuValue=(menu,value)=>{menu.dataset.value=value;menu.querySelector('[data-menu-label]').textContent=value==='all'?'All visibility':labels[value];menu.querySelectorAll('[role="option"]').forEach(option=>option.setAttribute('aria-selected',String((option.dataset.visibilityOption||option.dataset.filterOption)===value)))};
 const filterRecords=()=>{const query=document.querySelector('[data-search]').value.trim().toLowerCase();const visibility=filterMenu.dataset.value;let visible=0;for(const row of records){const match=(!query||row.dataset.search.includes(query))&&(visibility==='all'||row.dataset.visibility===visibility);row.hidden=!match;const detail=cardForId(row.dataset.record);if(!match)detail.hidden=true;else if(row.classList.contains('is-open'))detail.hidden=false;if(match)visible++}count.textContent=visible+' '+(visible===1?'artifact':'artifacts');empty.hidden=visible!==0};
-const syncVisibility=(id,value)=>{const row=document.querySelector('[data-record="'+id+'"]');const card=cardForId(id);row.dataset.visibility=value;row.dataset.search=row.dataset.searchText+' '+value;document.querySelectorAll('[data-visibility-menu][data-asset-id="'+id+'"]').forEach(menu=>{setMenuValue(menu,value);menu.querySelector('[data-visibility-option="secret_link"]').disabled=card.dataset.hasSecret!=='1'});const share=card.querySelector('.share-url');const copy=card.querySelector('[data-copy-public]');if(value==='public'){share.textContent=card.dataset.publicUrl;copy.disabled=false}else{share.textContent=value==='secret_link'?'Rotate the secret to receive a new capability URL':'Available when this artifact is public';copy.disabled=true}filterRecords()};
+const shareUrlFor=(card,value)=>value==='public'?card.dataset.publicUrl:value==='secret_link'?card.dataset.secretUrl:'';
+const syncShare=(row,card,value)=>{const url=shareUrlFor(card,value);card.querySelector('.share-url').textContent=url||(value==='secret_link'?'Rotate once to recover this existing secret link':'Available when this artifact is public');card.querySelector('[data-copy-public]').disabled=!url;const rowCopy=row.querySelector('[data-copy-row]');rowCopy.hidden=value==='private';rowCopy.disabled=!url};
+const syncVisibility=(id,value)=>{const row=document.querySelector('[data-record="'+id+'"]');const card=cardForId(id);row.dataset.visibility=value;row.dataset.search=row.dataset.searchText+' '+value;document.querySelectorAll('[data-visibility-menu][data-asset-id="'+id+'"]').forEach(menu=>{setMenuValue(menu,value);menu.querySelector('[data-visibility-option="secret_link"]').disabled=card.dataset.hasSecret!=='1'});syncShare(row,card,value);filterRecords()};
 const toggle=(row)=>{const detail=cardForId(row.dataset.record);const open=!row.classList.contains('is-open');for(const other of records){if(other===row)continue;other.classList.remove('is-open');other.setAttribute('aria-selected','false');other.querySelector('[data-inspect][aria-expanded]').setAttribute('aria-expanded','false');cardForId(other.dataset.record).hidden=true}row.classList.toggle('is-open',open);row.setAttribute('aria-selected',String(open));row.querySelector('[data-inspect][aria-expanded]').setAttribute('aria-expanded',String(open));detail.hidden=!open;if(open&&innerWidth<901)row.scrollIntoView({behavior:'smooth',block:'start'})};
 const setTheme=theme=>{document.documentElement.dataset.theme=theme;const dark=theme==='dark';document.querySelector('[data-theme-toggle]').setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');try{localStorage.setItem('shlook-theme',theme)}catch{}};
 let initialTheme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';try{initialTheme=localStorage.getItem('shlook-theme')||initialTheme}catch{}setTheme(initialTheme);
@@ -148,6 +174,7 @@ document.querySelector('[data-theme-toggle]').addEventListener('click',()=>setTh
 document.querySelectorAll('input[data-iso]').forEach(input=>{if(!input.dataset.iso)return;const date=new Date(input.dataset.iso);const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);input.value=local.toISOString().slice(0,16)});
 document.querySelector('[data-search]').addEventListener('input',filterRecords);
 document.addEventListener('keydown',event=>{const menu=event.target.closest?.('.custom-select');if(event.key==='Escape'){closeMenus();menu?.querySelector('[data-menu-button]')?.focus();return}if(!menu||!['ArrowDown','ArrowUp'].includes(event.key))return;event.preventDefault();const options=[...menu.querySelectorAll('[role="option"]:not(:disabled)')];const index=options.indexOf(document.activeElement);options[(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length]?.focus()});
+document.addEventListener('click',async event=>{const copy=event.target.closest('[data-copy-row],[data-copy-public]');if(!copy)return;event.preventDefault();event.stopImmediatePropagation();const row=copy.closest('[data-record]')||document.querySelector('[data-record="'+copy.closest('[data-detail]').dataset.detail+'"]');const card=cardForId(row.dataset.record);const url=shareUrlFor(card,row.dataset.visibility);if(!url)return;try{await navigator.clipboard.writeText(url);setStatus(card,'Share link copied.')}catch(error){reportError(card,error)}},true);
 document.addEventListener('click',async event=>{const menuButton=event.target.closest('[data-menu-button]');if(menuButton){toggleMenu(menuButton.closest('.custom-select'));return}const filterOption=event.target.closest('[data-filter-option]');if(filterOption){setMenuValue(filterMenu,filterOption.dataset.filterOption);closeMenus();filterRecords();return}const visibilityOption=event.target.closest('[data-visibility-option]');if(visibilityOption){const menu=visibilityOption.closest('[data-visibility-menu]');const id=menu.dataset.assetId;const row=document.querySelector('[data-record="'+id+'"]');const card=cardForId(id);const previous=row.dataset.visibility;const value=visibilityOption.dataset.visibilityOption;closeMenus();syncVisibility(id,value);menu.querySelector('[data-menu-button]').disabled=true;try{await mutate(card,'/visibility',{method:'PATCH',body:JSON.stringify({visibility:value})});setStatus(card,'Visibility updated.')}catch(error){syncVisibility(id,previous);reportError(card,error)}finally{menu.querySelector('[data-menu-button]').disabled=false}return}const inspect=event.target.closest('[data-inspect]');if(inspect){toggle(inspect.closest('[data-record]'));return}const row=event.target.closest('[data-record]');if(row&&!event.target.closest('a,button,input')){closeMenus();toggle(row);return}const button=event.target.closest('button');if(!button){closeMenus();return}const card=button.closest('[data-detail]');if(!card)return;button.disabled=true;try{if(button.dataset.secret){const action=button.dataset.secret;if(action==='revoke'){const current=document.querySelector('[data-record="'+card.dataset.detail+'"]').dataset.visibility;await mutate(card,'/secret',{method:'DELETE'});card.dataset.hasSecret='0';syncVisibility(card.dataset.detail,current==='secret_link'?'private':current);setStatus(card,'Secret revoked.');button.hidden=true;card.querySelector('[data-secret="rotate"]').dataset.secret='create';card.querySelector('[data-secret="create"]').textContent='Issue secret link'}else{const body=await mutate(card,'/secret?mode='+action,{method:'POST',body:'{}'});card.dataset.hasSecret='1';syncVisibility(card.dataset.detail,'secret_link');let copied=false;try{await navigator.clipboard.writeText(body.url);copied=true}catch{}setStatus(card,(copied?'Secret URL copied. ':'Secret URL: ')+body.url);button.dataset.secret='rotate';button.textContent='Rotate secret link';card.querySelector('[data-secret="revoke"]').hidden=false}}else if(button.hasAttribute('data-expiry')){const value=input=>input.value?new Date(input.value).toISOString():null;const hard=value(card.querySelector('[data-hard-expiry]'));if(hard&&!confirm('Artifact expiration permanently deletes this artifact at the selected time. Apply it?'))return;await mutate(card,'/expiry',{method:'PATCH',body:JSON.stringify({shareExpiresAt:value(card.querySelector('[data-share-expiry]')),hardExpiresAt:hard})});setStatus(card,'Expiration policy updated.');setTimeout(()=>location.reload(),500)}else if(button.hasAttribute('data-clear-expiry')){await mutate(card,'/expiry',{method:'PATCH',body:JSON.stringify({shareExpiresAt:null,hardExpiresAt:null})});setStatus(card,'Expirations cleared.');setTimeout(()=>location.reload(),350)}else if(button.hasAttribute('data-copy-public')){await navigator.clipboard.writeText(card.dataset.publicUrl);setStatus(card,'Share link copied.')}else if(button.hasAttribute('data-request-delete')){const confirmation=card.querySelector('[data-confirm]');confirmation.hidden=false;confirmation.querySelector('[data-delete]').focus()}else if(button.hasAttribute('data-cancel-delete')){card.querySelector('[data-confirm]').hidden=true;card.querySelector('[data-request-delete]').focus()}else if(button.hasAttribute('data-delete')){await mutate(card,'',{method:'DELETE'});location.reload()}}catch(error){reportError(card,error)}finally{if(document.contains(button))button.disabled=false}});
 filterRecords();`;
 }
@@ -164,11 +191,16 @@ function themeStyles(): string {
   return `:root{--ink:#202821;--muted:#6f7368;--faint:#eee9dc;--line:#d8d0c0;--line-strong:#b8ad99;--accent:#285e46;--accent-hover:#1f4e3a;--on-accent:#fffaf0;--owner-dot:#2f7153;--danger:#99443a;--danger-soft:#fae9e4;--paper:#f4f0e6;--white:#fbf8f0;--hover:#f1ecdf;--preview:#e7e1d4;--preview-large:#ded7c9;--accent-soft:#dfe8dd;--menu-shadow:0 12px 30px #3b31241f;--shadow:0 12px 32px #3b312418}html[data-theme="dark"]{--ink:#f0eee8;--muted:#b0b4ac;--faint:#353a35;--line:#454c45;--line-strong:#606960;--accent:#d4a06d;--accent-hover:#e0ae7c;--on-accent:#2c241c;--owner-dot:#d4a06d;--danger:#f0a09a;--danger-soft:#4a302d;--paper:#252925;--white:#2d322e;--hover:#363c37;--preview:#3b413c;--preview-large:#333834;--accent-soft:#49392d;--menu-shadow:0 16px 36px #171a1780;--shadow:0 16px 36px #171a1766}:focus-visible{outline-color:var(--accent)}.owner-mark:before{background:var(--owner-dot)}.artifact-row:hover{background:var(--hover)}.artifact-summary{display:-webkit-box;margin-top:5px;overflow:hidden;color:var(--muted);font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:1}.meta{color:var(--ink);opacity:.82}.inspect-button,.button{color:var(--ink)}.button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.button.primary:hover{background:var(--accent-hover)}.confirm p{color:var(--danger)}.panel-head .panel-description{max-width:420px;margin-top:8px;color:var(--muted);font:12px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:normal}.panel-head .panel-id{margin-top:6px;color:var(--muted);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}html[data-theme="dark"] .badge.public{color:#e3b583}html[data-theme="dark"] .badge.private{color:#c4c8c1}html[data-theme="dark"] .badge.secret_link{color:#d9bd94}html[data-theme="dark"] .button.primary{color:var(--on-accent)}html[data-theme="dark"] .button.primary:hover{background:var(--accent-hover)}@media(max-width:900px){.artifact-summary{-webkit-line-clamp:2}}`;
 }
 
+function behaviorStyles(): string {
+  return `th:nth-child(7){width:104px}.row-action{gap:6px}.row-copy svg{width:17px}.visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}`;
+}
+
 export async function ownerPage(
   request: Request,
   db: D1Database,
   privateOrigin: string,
   shareOrigin: string,
+  secretEncryptionKey?: string,
 ): Promise<Response> {
   const url = new URL(request.url);
   const offset = Number(url.searchParams.get("offset") ?? 0);
@@ -177,14 +209,44 @@ export async function ownerPage(
   }
   const { results } = await db
     .prepare(
-      "SELECT id, name, description, visibility, secret_hash IS NOT NULL AS has_secret, share_expires_at, " +
-        "hard_expires_at, created_at, updated_at FROM assets WHERE state = 'live' AND " +
+      "SELECT id, name, description, visibility, secret_hash, secret_ciphertext, secret_iv, " +
+        "share_expires_at, hard_expires_at, created_at, updated_at FROM assets WHERE state = 'live' AND " +
         "(hard_expires_at IS NULL OR hard_expires_at > ?) " +
         "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
     )
     .bind(new Date().toISOString(), pageSize + 1, offset)
-    .all<OwnerAsset>();
-  const assets = results.slice(0, pageSize);
+    .all<OwnerAssetRow>();
+  const recovered = await Promise.all(
+    results.map(async (asset): Promise<OwnerAsset> => {
+      let secretUrl: string | null = null;
+      if (
+        asset.secret_hash !== null &&
+        asset.secret_ciphertext !== null &&
+        asset.secret_iv !== null &&
+        secretEncryptionKey !== undefined
+      ) {
+        try {
+          const secret = await decryptSecret(
+            asset.secret_ciphertext,
+            asset.secret_iv,
+            asset.id,
+            secretEncryptionKey,
+          );
+          if ((await hashSecret(secret)) === asset.secret_hash) {
+            secretUrl = `${shareOrigin}/s/${secret}/assets/${asset.id}/`;
+          }
+        } catch {
+          // A missing, rotated, or corrupt key must not expose an invalid capability.
+        }
+      }
+      return {
+        ...asset,
+        has_secret: asset.secret_hash === null ? 0 : 1,
+        secret_url: secretUrl,
+      };
+    }),
+  );
+  const assets = recovered.slice(0, pageSize);
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
   const nonce = btoa(String.fromCharCode(...nonceBytes));
   const rows = assets
@@ -200,7 +262,7 @@ export async function ownerPage(
     results.length > pageSize
       ? `<a href="/?offset=${offset + pageSize}">Older →</a>`
       : "<span></span>";
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>shlook / owner archive</title><style nonce="${nonce}">${styles()}${interactionStyles()}${themeStyles()}</style></head><body>
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>shlook / owner archive</title><style nonce="${nonce}">${styles()}${interactionStyles()}${themeStyles()}${behaviorStyles()}</style></head><body>
   <header class="masthead"><div class="shell"><div class="identity"><span class="wordmark">shlook</span><span class="context">Owner archive</span></div><div class="header-actions"><span class="owner-mark">Owner access</span><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to dark mode"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="moon" d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><g class="sun" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></div></div></header>
   <main class="shell"><div class="page-heading"><div><h1>Artifact archive</h1><p>Inspect and manage generated artifacts.</p></div><span class="count" data-count>${assets.length} ${assets.length === 1 ? "artifact" : "artifacts"}</span></div>
   <div class="toolbar" aria-label="Archive controls"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="sr-only">Search artifacts</span><input data-search type="search" placeholder="Search name, description, or ID" autocomplete="off"></label><div class="filter-wrap"><span>Visibility</span><div class="custom-select filter-select" data-filter-menu data-value="all"><button class="custom-trigger" type="button" data-menu-button aria-haspopup="listbox" aria-expanded="false"><span data-menu-label>All visibility</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button><div class="custom-options" data-menu-list role="listbox" hidden><button type="button" role="option" data-filter-option="all" aria-selected="true">All visibility</button><button type="button" role="option" data-filter-option="public" aria-selected="false">Public</button><button type="button" role="option" data-filter-option="private" aria-selected="false">Private</button><button type="button" role="option" data-filter-option="secret_link" aria-selected="false">Secret link</button></div></div></div></div>

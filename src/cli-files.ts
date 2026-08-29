@@ -106,7 +106,7 @@ export function setupPlanData(
         customDomains: ["one Worker with three custom hostnames"],
         workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
       },
-      bindings: { d1: "DB", r2: "ASSETS" },
+      bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
       names: "operator_owned",
       origins,
     },

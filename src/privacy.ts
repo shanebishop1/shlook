@@ -1,10 +1,12 @@
 import { readJsonWithin } from "./request";
+import { encryptSecret } from "./secret-crypto";
 
 export interface DeploymentEnv {
   SHLOOK_OWNER_ORIGIN: string;
   SHLOOK_PRIVATE_ORIGIN: string;
   SHLOOK_SHARE_ORIGIN: string;
   SHLOOK_OWNER_EMAIL: string;
+  SHLOOK_SECRET_ENCRYPTION_KEY?: string;
 }
 
 export interface DeploymentConfig {
@@ -155,6 +157,7 @@ export async function handlePrivacyMutation(
   asset: PrivacyAsset,
   operation: "visibility" | "secret" | "expiry",
   shareOrigin: string,
+  secretEncryptionKey?: string,
 ): Promise<Response | null> {
   if (asset.state !== "live") return json({ error: "asset_not_live" }, 409);
 
@@ -171,6 +174,12 @@ export async function handlePrivacyMutation(
     }
     const secret = issueSecret();
     const hash = await hashSecret(secret);
+    let encrypted;
+    try {
+      encrypted = await encryptSecret(secret, asset.id, secretEncryptionKey ?? "");
+    } catch {
+      return json({ error: "secret_encryption_unavailable" }, 500);
+    }
     const condition =
       mode === "create"
         ? " AND secret_hash IS NULL"
@@ -179,8 +188,9 @@ export async function handlePrivacyMutation(
           : "";
     const updated = await liveUpdate(
       db,
-      "UPDATE assets SET secret_hash = ?, visibility = 'secret_link', updated_at = ?",
-      [hash, new Date().toISOString()],
+      "UPDATE assets SET secret_hash = ?, secret_ciphertext = ?, secret_iv = ?, " +
+        "visibility = 'secret_link', updated_at = ?",
+      [hash, encrypted.ciphertext, encrypted.iv, new Date().toISOString()],
       asset.id,
       condition,
     );
@@ -194,8 +204,9 @@ export async function handlePrivacyMutation(
   if (operation === "secret" && request.method === "DELETE") {
     const updated = await liveUpdate(
       db,
-      "UPDATE assets SET secret_hash = NULL, visibility = CASE WHEN visibility = 'secret_link' " +
-        "THEN 'private' ELSE visibility END, updated_at = ?",
+      "UPDATE assets SET secret_hash = NULL, secret_ciphertext = NULL, secret_iv = NULL, " +
+        "visibility = CASE WHEN visibility = 'secret_link' THEN 'private' ELSE visibility END, " +
+        "updated_at = ?",
       [new Date().toISOString()],
       asset.id,
     );

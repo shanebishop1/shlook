@@ -3,7 +3,8 @@ import { applyD1Migrations, reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { cleanupExpired } from "./index";
-import { deploymentConfig, handlePrivacyMutation } from "./privacy";
+import { deploymentConfig, handlePrivacyMutation, hashSecret } from "./privacy";
+import { decryptSecret } from "./secret-crypto";
 import {
   accessContext,
   createAsset,
@@ -334,18 +335,30 @@ describe("privacy and lifecycle", () => {
     expect(sharedSvg.headers.get("content-security-policy")).toContain("sandbox");
   });
 
-  it("stores only a hash and serves a newly issued secret capability", async () => {
+  it("stores a hash plus encrypted recovery data and serves a newly issued secret capability", async () => {
     const asset = await createLiveAsset("secret");
     const issued = await request(`/api/assets/${asset.id}/secret?mode=create`, { method: "POST" });
     const body = (await issued.json()) as { secret: string; url: string };
-    const row = await env.DB.prepare("SELECT secret_hash FROM assets WHERE id = ?")
+    const row = await env.DB.prepare(
+      "SELECT secret_hash, secret_ciphertext, secret_iv FROM assets WHERE id = ?",
+    )
       .bind(asset.id)
-      .first<{ secret_hash: string }>();
+      .first<{ secret_hash: string; secret_ciphertext: string; secret_iv: string }>();
 
     expect(body.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(new URL(body.url).origin).toBe(`https://${shareHost}`);
     expect(row?.secret_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(row?.secret_hash).not.toBe(body.secret);
+    expect(row?.secret_ciphertext).not.toContain(body.secret);
+    await expect(
+      decryptSecret(
+        row?.secret_ciphertext ?? "",
+        row?.secret_iv ?? "",
+        asset.id,
+        env.SHLOOK_SECRET_ENCRYPTION_KEY,
+      ),
+    ).resolves.toBe(body.secret);
+    expect(await (await request("/")).text()).toContain(body.url);
     expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
       404,
     );
@@ -365,7 +378,10 @@ describe("privacy and lifecycle", () => {
     const second = (await (
       await request(`/api/assets/${asset.id}/secret?mode=rotate`, { method: "POST" })
     ).json()) as { url: string };
+    const ownerArchive = await (await request("/")).text();
 
+    expect(ownerArchive).toContain(second.url);
+    expect(ownerArchive).not.toContain(first.url);
     expect(
       (await request(new URL(first.url).pathname, undefined, shareHost, undefined)).status,
     ).toBe(404);
@@ -375,9 +391,33 @@ describe("privacy and lifecycle", () => {
     expect((await request(`/api/assets/${asset.id}/secret`, { method: "DELETE" })).status).toBe(
       204,
     );
+    await expect(
+      env.DB.prepare("SELECT secret_hash, secret_ciphertext, secret_iv FROM assets WHERE id = ?")
+        .bind(asset.id)
+        .first(),
+    ).resolves.toMatchObject({
+      secret_hash: null,
+      secret_ciphertext: null,
+      secret_iv: null,
+    });
     expect(
       (await request(new URL(second.url).pathname, undefined, shareHost, undefined)).status,
     ).toBe(404);
+  });
+
+  it("marks historical one-way secrets as requiring one final rotation", async () => {
+    const asset = await createLiveAsset("historical secret");
+    const historicalSecret = "h".repeat(43);
+    await env.DB.prepare(
+      "UPDATE assets SET secret_hash = ?, visibility = 'secret_link' WHERE id = ?",
+    )
+      .bind(await hashSecret(historicalSecret), asset.id)
+      .run();
+
+    const body = await (await request("/")).text();
+
+    expect(body).toContain("Rotate once to recover this existing secret link");
+    expect(body).not.toContain(historicalSecret);
   });
 
   it("expires sharing without removing private owner access", async () => {

@@ -112,7 +112,7 @@ test("setup plan is read-only and reports unresolved inspection conflicts", asyn
       customDomains: ["one Worker with three custom hostnames"],
       workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
     },
-    bindings: { d1: "DB", r2: "ASSETS" },
+    bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
     names: "operator_owned",
     origins: {
       owner: "https://owner.example.com",

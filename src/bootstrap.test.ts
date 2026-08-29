@@ -85,6 +85,15 @@ describe("worker bootstrap", () => {
     expect(body).toContain('class="artifact-link"');
     expect(body).toContain("data-theme-toggle");
     expect(body).toContain('data-copy-public aria-label="Copy share link"');
+    expect(body).toContain("data-copy-row");
+    expect(body).toContain("data-secret-url");
+    expect(body).toContain(
+      "path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url",
+    );
+    expect(body).toContain(
+      "syncVisibility(id,value);menu.querySelector('[data-menu-button]').disabled=true",
+    );
+    expect(body).toContain(".visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}");
     expect(body).toContain("Share expiration");
     expect(body).toContain("Artifact expiration");
     expect(body).toContain("Clear expirations");

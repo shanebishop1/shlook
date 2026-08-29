@@ -9,6 +9,8 @@ export interface AssetRow {
   finalize_started_at: string | null;
   manifest_id: string | null;
   secret_hash: string | null;
+  secret_ciphertext: string | null;
+  secret_iv: string | null;
   share_expires_at: string | null;
   hard_expires_at: string | null;
   cleanup_pending: number;
@@ -19,7 +21,7 @@ export interface AssetRow {
 
 export const assetColumns =
   "id, name, description, state, visibility, upload_count, finalize_token, finalize_started_at, manifest_id, " +
-  "secret_hash, share_expires_at, hard_expires_at, cleanup_pending, cleanup_checked_at, " +
+  "secret_hash, secret_ciphertext, secret_iv, share_expires_at, hard_expires_at, cleanup_pending, cleanup_checked_at, " +
   "created_at, updated_at";
 
 export async function findAsset(db: D1Database, id: string): Promise<AssetRow | null> {

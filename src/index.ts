@@ -80,6 +80,8 @@ async function createAsset(request: Request, env: Env): Promise<Response> {
         finalize_started_at: null,
         manifest_id: null,
         secret_hash: null,
+        secret_ciphertext: null,
+        secret_iv: null,
         share_expires_at: null,
         hard_expires_at: null,
         cleanup_pending: 0,
@@ -361,7 +363,13 @@ async function route(
   }
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/archive")) {
-    return ownerPage(request, env.DB, config.privateOrigin, config.shareOrigin);
+    return ownerPage(
+      request,
+      env.DB,
+      config.privateOrigin,
+      config.shareOrigin,
+      env.SHLOOK_SECRET_ENCRYPTION_KEY,
+    );
   }
 
   if (url.pathname === "/api/assets") {
@@ -403,6 +411,7 @@ async function route(
       asset,
       privacyRoute[2] as "visibility" | "secret" | "expiry",
       config.shareOrigin,
+      env.SHLOOK_SECRET_ENCRYPTION_KEY,
     );
     if (response !== null) {
       if (privacyRoute[2] === "expiry" && response.ok) {

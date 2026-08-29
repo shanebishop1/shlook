@@ -23,6 +23,7 @@ Record these values before deploying:
 | Share surface   | `<share-worker-name>` / `<share-host>`     |
 | Human identity  | `<owner-email>`                            |
 | Agent identity  | `<access-service-token-id>` and secret     |
+| Secret recovery | 32 random bytes, base64 encoded            |
 
 Create a dedicated operator directory and install the package locally so Wrangler can resolve
 the package-owned Worker and migrations:
@@ -60,7 +61,23 @@ The package does not automate this checklist.
    `SHLOOK_OWNER_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, `SHLOOK_SHARE_ORIGIN`, and
    `SHLOOK_OWNER_EMAIL`. Wrangler `vars` and bindings do not inherit into named environments,
    so the no-domain template repeats them intentionally.
-4. Apply all D1 migrations remotely before deployment:
+4. Generate the secret-link encryption key without printing it and store it as a Worker secret.
+   The custom-domain topology needs it on the shared Worker; the no-domain topology needs it
+   only on the owner Worker:
+
+   ```bash
+   # Custom-domain template:
+   openssl rand -base64 32 | npx wrangler secret put SHLOOK_SECRET_ENCRYPTION_KEY --config <operator-config>
+
+   # workers.dev template:
+   openssl rand -base64 32 | npx wrangler secret put SHLOOK_SECRET_ENCRYPTION_KEY --config <operator-config> --env owner
+   ```
+
+   Back up this key in the operator's secret manager. Losing or rotating it makes existing
+   encrypted capability URLs unrecoverable in the owner UI; share validation still uses their
+   hashes until each capability is rotated or revoked.
+
+5. Apply all D1 migrations remotely before deployment:
 
    ```bash
    # Custom-domain template:
@@ -70,7 +87,7 @@ The package does not automate this checklist.
    npx wrangler d1 migrations apply <database-name> --remote --config <operator-config> --env owner
    ```
 
-5. Deploy three isolated origins:
+6. Deploy three isolated origins:
    - **With a domain:** route the owner, private, and share surfaces to three distinct
      hostnames. Turn off `workers.dev` and preview URLs for protected deployments.
    - **Without a domain:** deploy three distinct Worker names with `workers_dev` enabled. Use
@@ -88,13 +105,13 @@ The package does not automate this checklist.
    npx wrangler deploy --config wrangler.jsonc --env share
    ```
 
-6. Configure Cloudflare Access only on the owner and private origins. Add an Allow policy for
+7. Configure Cloudflare Access only on the owner and private origins. Add an Allow policy for
    exactly `<owner-email>` and a Service Auth policy containing the agent service token. Do
    not protect the share origin with Access. In custom-domain mode, create hostname-scoped
    self-hosted Access applications for the owner and private hostnames. Do not enable the
    dashboard's Worker-wide **Protect this Worker** control on the shared Worker, because that
    would also challenge the public share hostname.
-7. Give the agent the service-token credentials and all three origins:
+8. Give the agent the service-token credentials and all three origins:
 
    ```bash
    export CF_ACCESS_CLIENT_ID="<access-service-token-client-id>"
@@ -106,7 +123,7 @@ The package does not automate this checklist.
 
    Use each URL's origin only: HTTPS scheme plus hostname, with no path.
 
-8. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
+9. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
 
 ## About `shlook setup`
 

@@ -20,7 +20,8 @@ Perform audience checks separately with credentials appropriate to each audience
   the private origin is denied by Access; the public URL returns `404`.
 - Public: the public URL loads without Access.
 - Secret link: the one-time URL returned by `secret create|rotate` loads; a rotated or revoked
-  capability returns `404`. Never reconstruct or log a capability URL.
+  capability returns `404`. Confirm the authenticated owner archive can copy the same active
+  URL after reload. Never log a capability URL.
 - Share expiry: share access returns `404` while private owner access remains.
 - Hard expiry or deletion: all artifact access returns `404`.
 

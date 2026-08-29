@@ -4,9 +4,13 @@
 - Private artifacts are served only from `SHLOOK_PRIVATE_ORIGIN` and require Cloudflare
   Access.
 - `public` is stable unauthenticated sharing from `SHLOOK_SHARE_ORIGIN`.
-- `secret_link` uses a 256-bit capability returned once when created or rotated. Creation
-  rejects an existing capability; rotation requires and invalidates an existing capability.
-  Revocation makes a secret-link asset private again.
+- `secret_link` uses a 256-bit capability. Its SHA-256 hash verifies share requests, while an
+  AES-256-GCM copy encrypted with the operator-owned `SHLOOK_SECRET_ENCRYPTION_KEY` lets the
+  authenticated owner UI display and copy the active URL later. Creation rejects an existing
+  capability; rotation requires and invalidates an existing capability. Revocation clears the
+  hash and encrypted recovery data and makes a secret-link asset private again.
+- Capabilities created before encrypted recovery was introduced require one final rotation;
+  one-way hashes cannot reconstruct their original URLs.
 - Share expiry denies public and capability access but preserves private owner access.
 - Hard expiry denies all access and schedules bounded physical cleanup.
 - Deletion targets exactly one asset and is logically immediate.

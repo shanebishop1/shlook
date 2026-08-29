@@ -46,6 +46,10 @@ SHLOOK_SHARE_ORIGIN=https://<share-host>
 SHLOOK_OWNER_EMAIL=<owner-email>
 ```
 
+The owner Worker also requires a 32-byte base64 encryption key stored as a Cloudflare Worker
+secret named `SHLOOK_SECRET_ENCRYPTION_KEY`. It encrypts recoverable capability URLs at rest;
+never place it in `vars`, source control, or agent output.
+
 Set these operator-owned values for every CLI or agent environment:
 
 ```bash
