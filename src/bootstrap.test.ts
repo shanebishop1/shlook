@@ -90,6 +90,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain(
       "path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url",
     );
+    expect(body).toContain("message.startsWith('Secret URL copied')?'Secret link copied.'");
     expect(body).toContain(
       "syncVisibility(id,value);menu.querySelector('[data-menu-button]').disabled=true",
     );
