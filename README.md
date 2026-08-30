@@ -8,19 +8,22 @@ sharing require an explicit visibility change.
 
 A deployment has four browser origins with different trust levels:
 
-| Origin  | Purpose                                          | Cloudflare Access |
-| ------- | ------------------------------------------------ | ----------------- |
-| Owner   | Owner UI, health check, and all `/api` mutations | Required          |
-| Private | Owner-authenticated artifact viewing             | Required          |
-| Public  | Stable public artifact URLs                      | Not enabled       |
-| Share   | Secret capability-link artifacts                 | Not enabled       |
+| Origin  | Purpose                                    | Cloudflare Access |
+| ------- | ------------------------------------------ | ----------------- |
+| Owner   | Owner UI/API and isolated archive previews | Required          |
+| Private | Owner-authenticated artifact viewing       | Required          |
+| Public  | Stable public artifact URLs                | Not enabled       |
+| Share   | Secret capability-link artifacts           | Not enabled       |
 
 All four must be distinct, pathless HTTPS origins.
 
-Untrusted artifacts can contain active HTML and JavaScript. They must never share an origin
-with the owner UI or mutation API: same-origin artifact code could send owner-authorized API
-requests. For that reason, one-origin path multiplexing such as `/api`, `/private`, and
-`/share` on one hostname is not supported. Paths are not a browser security boundary.
+Untrusted artifacts can contain active HTML and JavaScript. Normal artifact views must never
+share an origin with the owner UI or mutation API: same-origin artifact code could send
+owner-authorized API requests. The archive's authenticated `/preview/assets/**` route is a
+narrow exception whose iframe and response policies force an opaque sandbox, deny network and
+form actions, and block cross-site or passive browser-resource requests to `/api/**`. For that
+reason, general one-origin path multiplexing such as `/api`, `/private`, and `/share` on one
+hostname is not supported. Paths alone are not a browser security boundary.
 
 ## Deployment modes
 

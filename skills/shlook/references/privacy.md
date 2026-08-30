@@ -19,10 +19,12 @@
 - Deletion targets exactly one asset and is logically immediate.
 
 The owner/API, private-artifact, stable-public, and capability-share origins must be distinct,
-pathless HTTPS origins. Untrusted active artifact content must not share an origin with owner
-mutations, so a one-host deployment with path prefixes is unsupported. Owner and private require
-Access; public and share are unauthenticated but isolated from each other by host and route
-grammar.
+pathless HTTPS origins. Normal untrusted artifact views must not share an origin with owner
+mutations, so a one-host deployment with path prefixes is unsupported. The owner archive's
+`/preview/assets/<asset-id>/**` route is limited to authenticated, noninteractive previews in an
+opaque iframe sandbox; preview CSP denies connections and forms, and owner APIs reject passive
+browser-resource destinations and cross-site Fetch Metadata. Owner and private require Access;
+public and share are unauthenticated but isolated from each other by host and route grammar.
 
 Do not choose public or secret-link visibility without explicit user intent. Do not place
 capability URLs in public logs. Never treat an asset ID as a secret. Keep the R2 bucket private;

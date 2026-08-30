@@ -271,7 +271,12 @@ async function finalizeAsset(request: Request, env: Env, id: string): Promise<Re
   }
 }
 
-async function serveAsset(env: Env, asset: AssetRow, encodedPath: string): Promise<Response> {
+async function serveAsset(
+  env: Env,
+  asset: AssetRow,
+  encodedPath: string,
+  preview = false,
+): Promise<Response> {
   if (asset.state !== "live") return error("not_found", 404);
 
   if (asset.manifest_id === null) return error("not_found", 404);
@@ -285,7 +290,15 @@ async function serveAsset(env: Env, asset: AssetRow, encodedPath: string): Promi
   const object = await env.ASSETS.get(uploadKey(asset.id, file.uploadId));
   if (object === null) return error("not_found", 404);
 
-  return new Response(object.body, { headers: artifactHeaders(object) });
+  const headers = artifactHeaders(object);
+  if (preview) {
+    headers.set(
+      "content-security-policy",
+      "sandbox allow-scripts; connect-src 'none'; form-action 'none'; " +
+        "base-uri 'none'; frame-ancestors 'self'",
+    );
+  }
+  return new Response(object.body, { headers });
 }
 
 async function serveWithPolicy(
@@ -294,6 +307,7 @@ async function serveWithPolicy(
   path: string,
   mode: "private" | "public" | "secret",
   secret?: string,
+  preview = false,
 ): Promise<Response> {
   if (asset === null || asset.state !== "live") return error("not_found", 404);
   const access = await artifactAccess(asset, mode, secret);
@@ -301,7 +315,7 @@ async function serveWithPolicy(
     await deleteAsset(env, asset.id);
     return error("not_found", 404);
   }
-  return access === "allow" ? serveAsset(env, asset, path) : error("not_found", 404);
+  return access === "allow" ? serveAsset(env, asset, path, preview) : error("not_found", 404);
 }
 
 async function route(
@@ -370,6 +384,16 @@ async function route(
     return error("csrf_denied", 403);
   }
 
+  const fetchDestination = request.headers.get("sec-fetch-dest");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (
+    url.pathname.startsWith("/api/") &&
+    ((fetchDestination !== null && fetchDestination !== "empty") ||
+      (fetchSite !== null && fetchSite !== "same-origin"))
+  ) {
+    return error("request_denied", 403);
+  }
+
   if (request.method === "GET" && url.pathname === "/health") {
     return json({ ok: true, service: "shlook" });
   }
@@ -382,6 +406,18 @@ async function route(
       config.publicOrigin,
       config.shareOrigin,
       env.SHLOOK_SECRET_ENCRYPTION_KEY,
+    );
+  }
+
+  const preview = url.pathname.match(/^\/preview\/assets\/([^/]+)(?:\/(.*))?$/);
+  if (request.method === "GET" && preview !== null && assetIdPattern.test(preview[1])) {
+    return serveWithPolicy(
+      env,
+      await findAsset(env.DB, preview[1]),
+      preview[2] ?? "",
+      "private",
+      undefined,
+      true,
     );
   }
 

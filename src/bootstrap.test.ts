@@ -59,12 +59,8 @@ describe("worker bootstrap", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
-    expect(response.headers.get("content-security-policy")).toContain(
-      "frame-src https://private.example.com",
-    );
-    expect(response.headers.get("content-security-policy")).toContain(
-      "img-src https://private.example.com",
-    );
+    expect(response.headers.get("content-security-policy")).toContain("frame-src 'self'");
+    expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
     expect(body).toContain(id);
     expect(body).toContain("Forest &lt;release&gt;");
     expect(body).toContain("A calm &amp; searchable archive entry");
@@ -74,7 +70,20 @@ describe("worker bootstrap", () => {
     expect(body).toContain('class="preview-frame"');
     expect(body).toContain("data-preview-image");
     expect(body).toContain("data-preview-fallback");
-    expect(body).toContain('sandbox="allow-same-origin"');
+    expect(body).toContain(`src="/preview/assets/${id}/"`);
+    expect(body).toContain(`data-preview-fallback data-src="/preview/assets/${id}/"`);
+    expect(body).not.toContain("data-preview-fallback src=");
+    expect(body).toContain('sandbox="allow-scripts"');
+    expect(body).toContain('scrolling="no"');
+    expect(body).not.toContain('sandbox="allow-same-origin"');
+    expect(body).toContain("new ResizeObserver(resize).observe(media)");
+    expect(body).toContain("const renderWidth=1280");
+    expect(body).toContain("if(!frame.hidden)return");
+    expect(body).toContain("requestAnimationFrame(resize)");
+    expect(body).toContain("frame.clientWidth!==renderWidth");
+    expect(body).toContain("frame.src=frame.dataset.src");
+    expect(body).toContain(".preview-media{position:relative;overflow:hidden}");
+    expect(body).toContain("pointer-events:none;transform-origin:top left");
     expect(body).toContain("data-inspect");
     expect(body).toContain("data-search");
     expect(body).toContain("data-search-text");

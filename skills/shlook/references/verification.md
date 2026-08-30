@@ -32,8 +32,10 @@ Also verify the deployment boundary:
 3. The public origin rejects `/s/<capability>/assets/<asset-id>/**`, and the share origin rejects
    direct `/assets/<asset-id>/**`, both with `404`. Never print the capability while testing.
 4. Owner `/api/**` paths are unavailable on private, public, and share origins.
-5. Artifact paths are unavailable on the owner origin except for its documented redirect
-   behavior.
+5. Normal artifact paths are unavailable on the owner origin except for its documented redirect
+   behavior. Authenticated `/preview/assets/<asset-id>/**` succeeds only on the owner origin and
+   returns CSP with an opaque `sandbox`, `connect-src 'none'`, `form-action 'none'`, and
+   `frame-ancestors 'self'`.
 6. Any unused `workers.dev` and preview URLs are disabled; in no-domain mode, Access is enabled
    directly on the owner/private production `workers.dev` routes.
 

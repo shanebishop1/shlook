@@ -53,10 +53,10 @@ function dateLabel(value: string | null, empty: string): string {
   return `<span class="meta">${escapeHtml(day)}<span class="meta-sub">${escapeHtml(time)} UTC</span></span>`;
 }
 
-function previewMedia(privateUrl: string, assetName: string, large = false): string {
+function previewMedia(previewUrl: string, assetName: string, large = false): string {
   const size = large ? "Large preview" : "Preview";
   const label = escapeHtml(assetName);
-  return `<div class="preview-media"><img class="preview-image" data-preview-image src="${privateUrl}" alt="${size} of ${label}" loading="lazy" referrerpolicy="no-referrer"><iframe class="preview-frame" data-preview-fallback src="${privateUrl}" title="${size} of ${label}" sandbox="allow-same-origin" loading="lazy" referrerpolicy="no-referrer" tabindex="-1" hidden></iframe></div>`;
+  return `<div class="preview-media"><img class="preview-image" data-preview-image src="${previewUrl}" alt="${size} of ${label}" loading="lazy" referrerpolicy="no-referrer"><iframe class="preview-frame" data-preview-fallback data-src="${previewUrl}" title="${size} of ${label}" sandbox="allow-scripts" scrolling="no" loading="lazy" referrerpolicy="no-referrer" tabindex="-1" hidden></iframe></div>`;
 }
 
 function visibilityLabel(value: string): string {
@@ -91,6 +91,7 @@ function assetRows(
     `${asset.id} ${asset.name} ${asset.description ?? ""}`.toLowerCase(),
   );
   const privateUrl = `${privateOrigin}/assets/${id}/`;
+  const previewUrl = `/preview/assets/${id}/`;
   const publicUrl = `${publicOrigin}/assets/${id}/`;
   const secretUrl = asset.secret_url === null ? "" : escapeHtml(asset.secret_url);
   const shareUrl =
@@ -109,7 +110,7 @@ function assetRows(
   const hardExpiry = dateLabel(asset.hard_expires_at, "No expiration");
 
   return `<tr class="artifact-row" data-record="${id}" data-search-text="${searchText}" data-search="${searchText} ${asset.visibility}" data-visibility="${asset.visibility}" aria-selected="false">
-    <td class="preview-cell"><button class="preview-button" type="button" data-inspect aria-label="Inspect ${name}">${previewMedia(privateUrl, asset.name)}</button></td>
+    <td class="preview-cell"><button class="preview-button" type="button" data-inspect aria-label="Inspect ${name}">${previewMedia(previewUrl, asset.name)}</button></td>
      <td><a class="artifact-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer"><span class="artifact-title"><span class="artifact-name">${name}</span>${latest ? '<span class="latest">Latest</span>' : ""}</span>${description ? `<span class="artifact-summary">${description}</span>` : ""}<span class="artifact-id">${id}</span></a></td>
      <td>${visibilityMenu(asset, "row")}</td>
     <td>${shareExpiry}</td>
@@ -119,7 +120,7 @@ function assetRows(
   </tr>
    <tr class="detail-row" id="detail-${id}" data-detail="${id}" data-public-url="${publicUrl}" data-secret-url="${secretUrl}" data-has-secret="${asset.has_secret}" hidden>
     <td colspan="7"><div class="inspector">
-      <div class="large-preview">${previewMedia(privateUrl, asset.name, true)}</div>
+      <div class="large-preview">${previewMedia(previewUrl, asset.name, true)}</div>
       <div class="panel">
         <div class="panel-head"><div><h2>${name}</h2>${description ? `<p class="panel-description">${description}</p>` : ""}<p class="panel-id">${id}</p></div><a class="open-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer">Open private view <span aria-hidden="true">↗</span></a></div>
         <dl class="summary"><div><dt>Created</dt><dd>${created}</dd></div><div><dt>Updated</dt><dd>${updated}</dd></div></dl>
@@ -158,7 +159,8 @@ const setStatus=(_card,message,error=false)=>{if(message.startsWith('Secret URL'
 const reportError=(card,error)=>{setStatus(card,error.message,true);if(error.code==='not_found')setTimeout(()=>location.reload(),900)};
 const mutate=async(card,path,init)=>{setStatus(card,'Working...');const response=await fetch('/api/assets/'+card.dataset.detail+path,{...init,headers:{'content-type':'application/json',...(init.headers||{})}});let body={};try{body=await response.json()}catch{}if(!response.ok){const code=body.error||('request_failed_'+response.status);const failure=new Error(errorMessage(code));failure.code=code;throw failure}if(path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url;if(path==='/secret'&&init.method==='DELETE')card.dataset.secretUrl='';return body};
 const cardForId=id=>document.querySelector('[data-detail="'+id+'"]');
-const showPreviewFallback=image=>{image.hidden=true;image.parentElement.querySelector('[data-preview-fallback]').hidden=false};
+const fitPreviewFrame=frame=>{const media=frame.parentElement;const renderWidth=1280;const load=()=>{if(frame.hasAttribute('src')||frame.dataset.loading)return;frame.dataset.loading='1';requestAnimationFrame(()=>{delete frame.dataset.loading;if(media.clientWidth<=0||media.clientHeight<=0||frame.clientWidth!==renderWidth)return;frame.src=frame.dataset.src})};const resize=()=>{const scale=media.clientWidth/renderWidth;if(scale<=0||media.clientHeight<=0)return;frame.style.width=renderWidth+'px';frame.style.height=Math.ceil(media.clientHeight/scale)+'px';frame.style.transform='scale('+scale+')';load()};new ResizeObserver(resize).observe(media);requestAnimationFrame(resize)};
+const showPreviewFallback=image=>{const frame=image.parentElement.querySelector('[data-preview-fallback]');if(!frame.hidden)return;image.hidden=true;frame.hidden=false;fitPreviewFrame(frame)};
 document.querySelectorAll('[data-preview-image]').forEach(image=>{image.addEventListener('error',()=>showPreviewFallback(image),{once:true});if(image.complete&&image.naturalWidth===0)showPreviewFallback(image)});
 const closeMenus=except=>{document.querySelectorAll('[data-menu-list]:not([hidden])').forEach(list=>{if(list===except)return;list.hidden=true;list.parentElement.querySelector('[data-menu-button]').setAttribute('aria-expanded','false')})};
 const toggleMenu=menu=>{const list=menu.querySelector('[data-menu-list]');const open=list.hidden;closeMenus(open?list:null);list.hidden=!open;menu.querySelector('[data-menu-button]').setAttribute('aria-expanded',String(open));if(open){const selected=list.querySelector('[aria-selected="true"]:not(:disabled)')||list.querySelector('[role="option"]:not(:disabled)');selected?.focus()}};
@@ -196,7 +198,7 @@ function darkThemeStyles(): string {
 }
 
 function behaviorStyles(): string {
-  return `html{scrollbar-gutter:stable}.artifact-link:hover .artifact-title,.artifact-link:focus-visible .artifact-title{text-decoration:none}.artifact-link:hover .artifact-name,.artifact-link:focus-visible .artifact-name{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}th:nth-child(7){width:104px}.row-action{gap:6px}.row-copy svg{width:17px}.visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}`;
+  return `html{scrollbar-gutter:stable}.artifact-link:hover .artifact-title,.artifact-link:focus-visible .artifact-title{text-decoration:none}.artifact-link:hover .artifact-name,.artifact-link:focus-visible .artifact-name{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}th:nth-child(7){width:104px}.row-action{gap:6px}.row-copy svg{width:17px}.visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}.preview-media{position:relative;overflow:hidden}.preview-frame{position:absolute;inset:0 auto auto 0;pointer-events:none;transform-origin:top left}`;
 }
 
 export async function ownerPage(
@@ -276,7 +278,7 @@ export async function ownerPage(
   return new Response(body, {
     headers: {
       "cache-control": "private, no-store",
-      "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src ${privateOrigin}; frame-src ${privateOrigin}; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
+      "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
       "content-type": "text/html; charset=utf-8",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",

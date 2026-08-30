@@ -290,6 +290,27 @@ describe("privacy and lifecycle", () => {
     expect(response.headers.get("location")).toBe(`https://${privateHost}/assets/${asset.id}/`);
   });
 
+  it("serves isolated artifact previews only through the authenticated owner origin", async () => {
+    const asset = await createLiveAsset("<h1>private preview</h1>");
+    const path = `/preview/assets/${asset.id}/`;
+
+    expect((await request(path, undefined, ownerHost, null)).status).toBe(403);
+    expect((await request(path, undefined, privateHost)).status).toBe(404);
+    expect((await request(path, undefined, publicHost, null)).status).toBe(404);
+    expect((await request(path, undefined, shareHost, null)).status).toBe(404);
+
+    const response = await request(path);
+    const policy = response.headers.get("content-security-policy") ?? "";
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("<h1>private preview</h1>");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(policy).toContain("sandbox allow-scripts");
+    expect(policy).not.toContain("allow-same-origin");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("form-action 'none'");
+    expect(policy).toContain("frame-ancestors 'self'");
+  });
+
   it("requires Access for private-host artifacts", async () => {
     const asset = await createLiveAsset("private");
 
@@ -315,6 +336,38 @@ describe("privacy and lifecycle", () => {
         })
       ).status,
     ).toBe(403);
+  });
+
+  it("rejects owner API requests embedded as passive browser resources", async () => {
+    expect(
+      (
+        await request("/api/assets", {
+          headers: { "sec-fetch-dest": "image" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request("/api/assets", {
+          headers: { "sec-fetch-dest": "iframe" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request("/api/assets", {
+          headers: { "sec-fetch-dest": "empty", "sec-fetch-site": "cross-site" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request("/api/assets", {
+          headers: { "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin" },
+        })
+      ).status,
+    ).toBe(200);
+    expect((await request("/api/assets")).status).toBe(200);
   });
 
   it("serves explicitly public HTML only from the sandboxed public host", async () => {
