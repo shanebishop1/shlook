@@ -1,6 +1,6 @@
 {
   "name": "shlook",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Private-by-default artifact hosting for agents",
   "license": "MIT",
   "author": "Shane Bishop",
