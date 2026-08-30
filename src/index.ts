@@ -11,7 +11,7 @@ import {
 import { normalizeAssetMetadata } from "./asset-metadata";
 import { assetColumns, findAsset, latestAsset, type AssetRow } from "./asset-store";
 import { cleanupAssetPage, cleanupExpired, deleteAsset } from "./cleanup";
-import { ownerPage } from "./owner-ui";
+import { ownerFavicon, ownerPage } from "./owner-ui";
 import {
   artifactAccess,
   assetJson,
@@ -392,6 +392,10 @@ async function route(
       (fetchSite !== null && fetchSite !== "same-origin"))
   ) {
     return error("request_denied", 403);
+  }
+
+  if (request.method === "GET" && url.pathname === "/favicon.svg") {
+    return ownerFavicon();
   }
 
   if (request.method === "GET" && url.pathname === "/health") {

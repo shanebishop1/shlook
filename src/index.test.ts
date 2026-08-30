@@ -338,6 +338,12 @@ describe("privacy and lifecycle", () => {
     ).toBe(403);
   });
 
+  it("keeps the owner favicon off artifact hosts", async () => {
+    expect((await request("/favicon.svg", undefined, privateHost)).status).toBe(404);
+    expect((await request("/favicon.svg", undefined, publicHost, null)).status).toBe(404);
+    expect((await request("/favicon.svg", undefined, shareHost, null)).status).toBe(404);
+  });
+
   it("rejects owner API requests embedded as passive browser resources", async () => {
     expect(
       (

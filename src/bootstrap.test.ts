@@ -37,6 +37,19 @@ describe("worker bootstrap", () => {
     expect((await request("/missing")).status).toBe(404);
   });
 
+  it("serves the Folded Signal favicon with a locked-down SVG policy", async () => {
+    const response = await request("/favicon.svg");
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=86400");
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(body).toContain('aria-label="shlook"');
+    expect(body).toContain("M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z");
+    expect(body).not.toContain("<script");
+  });
+
   it("renders a protected owner archive without weakening browser policy", async () => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -61,6 +74,12 @@ describe("worker bootstrap", () => {
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(response.headers.get("content-security-policy")).toContain("frame-src 'self'");
     expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
+    expect(body).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
+    expect(body).toContain('class="brand-mark"');
+    expect(body).toContain('class="brand-ribbon"');
+    expect(body).toContain('class="brand-fold"');
+    expect(body).toContain("M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z");
+    expect(body).toContain(".brand-mark{width:26px;height:28px");
     expect(body).toContain(id);
     expect(body).toContain("Forest &lt;release&gt;");
     expect(body).toContain("A calm &amp; searchable archive entry");
@@ -84,6 +103,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain("frame.src=frame.dataset.src");
     expect(body).toContain(".preview-media{position:relative;overflow:hidden}");
     expect(body).toContain("pointer-events:none;transform-origin:top left");
+    expect(body).toContain(".preview-frame{background:#fff}");
+    expect(body).toContain(".is-open [data-inspect][aria-expanded] svg{transform:rotate(180deg)}");
+    expect(body).not.toContain(".is-open .inspect-button svg{transform:rotate(180deg)}");
     expect(body).toContain("data-inspect");
     expect(body).toContain("data-search");
     expect(body).toContain("data-search-text");
