@@ -1,8 +1,8 @@
 # Verification
 
-Before testing, confirm that `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, and
-`SHLOOK_SHARE_ORIGIN` are three different HTTPS origins. Confirm that R2 has no public
-`r2.dev` URL/custom domain and that all D1 migrations are applied.
+Before testing, confirm that `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`,
+`SHLOOK_PUBLIC_ORIGIN`, and `SHLOOK_SHARE_ORIGIN` are four distinct, pathless HTTPS origins.
+Confirm that R2 has no public `r2.dev` URL/custom domain and that all D1 migrations are applied.
 
 Run `shlook verify <asset-id> --json` after publication and after material visibility or
 lifecycle changes. It performs two authenticated checks: owner metadata must report `live`,
@@ -15,7 +15,7 @@ values supplied at publication.
 Perform audience checks separately with credentials appropriate to each audience:
 
 - Private URL: `${SHLOOK_PRIVATE_ORIGIN}/assets/<asset-id>/`.
-- Public URL: `${SHLOOK_SHARE_ORIGIN}/assets/<asset-id>/`.
+- Public URL: `${SHLOOK_PUBLIC_ORIGIN}/assets/<asset-id>/`.
 - Private publication: authenticated private access succeeds; an unauthenticated request to
   the private origin is denied by Access; the public URL returns `404`.
 - Public: the public URL loads without Access.
@@ -28,16 +28,18 @@ Perform audience checks separately with credentials appropriate to each audience
 Also verify the deployment boundary:
 
 1. Owner and private origins require the configured owner identity or agent service token.
-2. Share-origin requests never receive an Access challenge.
-3. Owner `/api/**` paths are unavailable on private and share origins.
-4. Artifact paths are unavailable on the owner origin except for its documented redirect
+2. Public- and share-origin requests never receive an Access challenge.
+3. The public origin rejects `/s/<capability>/assets/<asset-id>/**`, and the share origin rejects
+   direct `/assets/<asset-id>/**`, both with `404`. Never print the capability while testing.
+4. Owner `/api/**` paths are unavailable on private, public, and share origins.
+5. Artifact paths are unavailable on the owner origin except for its documented redirect
    behavior.
-5. Any unused `workers.dev` and preview URLs are disabled; in no-domain mode, Access is enabled
+6. Any unused `workers.dev` and preview URLs are disabled; in no-domain mode, Access is enabled
    directly on the owner/private production `workers.dev` routes.
 
 Troubleshooting order:
 
-1. Check all five environment variables from `setup.md` without printing secrets.
+1. Check all six environment variables from `setup.md` without printing secrets.
 2. `shlook auth check --json`
 3. `shlook status --json`
 4. `shlook show <asset-id> --json`

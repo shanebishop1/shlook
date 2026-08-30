@@ -83,10 +83,15 @@ describe("worker bootstrap", () => {
     expect(body).toContain("data-filter-option");
     expect(body).toContain('aria-haspopup="listbox"');
     expect(body).toContain('class="artifact-link"');
+    expect(body).toContain('<span class="artifact-name">Forest &lt;release&gt;</span>');
+    expect(body).toContain("html{scrollbar-gutter:stable}");
+    expect(body).toContain(".artifact-link:hover .artifact-name");
     expect(body).toContain("data-theme-toggle");
     expect(body).toContain('data-copy-public aria-label="Copy share link"');
     expect(body).toContain("data-copy-row");
     expect(body).toContain("data-secret-url");
+    expect(body).toContain(`data-public-url="https://public.example.com/assets/${id}/"`);
+    expect(body).not.toContain(`data-public-url="https://share.example.com/assets/${id}/"`);
     expect(body).toContain(
       "path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url",
     );

@@ -9,6 +9,7 @@ const DEFAULT_ENV = {
   CF_ACCESS_CLIENT_SECRET: "test-secret",
   SHLOOK_API_ORIGIN: DEFAULT_ORIGIN,
   SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+  SHLOOK_PUBLIC_ORIGIN: "https://public.example.com",
   SHLOOK_SHARE_ORIGIN: "https://share.example.com",
 };
 const assetId = "11111111-1111-4111-8111-111111111111";
@@ -109,14 +110,15 @@ test("setup plan is read-only and reports unresolved inspection conflicts", asyn
   expect(inspectSetup).toHaveBeenCalledOnce();
   expect(output.data.resources).toMatchObject({
     workers: {
-      customDomains: ["one Worker with three custom hostnames"],
-      workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
+      customDomains: ["one Worker with four custom hostnames"],
+      workersDev: ["shlook-owner", "shlook-private", "shlook-public", "shlook-share"],
     },
     bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
     names: "operator_owned",
     origins: {
       owner: "https://owner.example.com",
       private: "https://private.example.com",
+      public: "https://public.example.com",
       share: "https://share.example.com",
     },
   });

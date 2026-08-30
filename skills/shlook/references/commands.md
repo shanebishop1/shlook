@@ -20,8 +20,9 @@ shlook verify <asset-id> --json
 ```
 
 `setup --plan` only reports packaged assumptions. `setup --apply` does not create D1 or R2,
-DNS/custom domains, three Worker names, Access applications or policies, or service tokens;
-use the manual operator checklist in `setup.md`.
+custom domains, four Worker names, Access applications or policies, or service tokens. Wrangler
+manages custom-domain DNS and certificates only when the operator deploys routes configured with
+`custom_domain: true`; use the manual operator checklist in `setup.md`.
 
 Publish requires a human-readable name of 1-80 characters. The optional description accepts
 up to 500 characters. Both values are trimmed, stored with the asset, returned by `list` and

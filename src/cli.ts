@@ -158,11 +158,15 @@ function origins(dependencies: CliDependencies) {
     dependencies.env.SHLOOK_PRIVATE_ORIGIN,
     "SHLOOK_PRIVATE_ORIGIN",
   );
+  const publicOrigin = configuredOrigin(
+    dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+    "SHLOOK_PUBLIC_ORIGIN",
+  );
   const share = configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN");
-  if (new Set([owner, privateOrigin, share]).size !== 3) {
-    throw new CliError("invalid_configuration", "shlook requires three distinct origins");
+  if (new Set([owner, privateOrigin, publicOrigin, share]).size !== 4) {
+    throw new CliError("invalid_configuration", "shlook requires four distinct origins");
   }
-  return { owner, private: privateOrigin, share };
+  return { owner, private: privateOrigin, public: publicOrigin, share };
 }
 
 function origin(dependencies: CliDependencies): string {
@@ -219,6 +223,10 @@ async function setupPlan(dependencies: CliDependencies) {
       dependencies.env.SHLOOK_PRIVATE_ORIGIN === undefined
         ? undefined
         : configuredOrigin(dependencies.env.SHLOOK_PRIVATE_ORIGIN, "SHLOOK_PRIVATE_ORIGIN"),
+    public:
+      dependencies.env.SHLOOK_PUBLIC_ORIGIN === undefined
+        ? undefined
+        : configuredOrigin(dependencies.env.SHLOOK_PUBLIC_ORIGIN, "SHLOOK_PUBLIC_ORIGIN"),
     share:
       dependencies.env.SHLOOK_SHARE_ORIGIN === undefined
         ? undefined

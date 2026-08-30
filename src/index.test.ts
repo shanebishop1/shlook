@@ -12,6 +12,7 @@ import {
   finalizeAsset,
   ownerHost,
   privateHost,
+  publicHost,
   request,
   shareHost,
   uploadedFile,
@@ -264,12 +265,13 @@ describe("privacy and lifecycle", () => {
     expect((await request("/api/assets", undefined, "worker.example.com")).status).toBe(404);
     expect(() =>
       deploymentConfig({
-        SHLOOK_OWNER_ORIGIN: "https://same.example.com",
-        SHLOOK_PRIVATE_ORIGIN: "https://same.example.com",
+        SHLOOK_OWNER_ORIGIN: "https://owner.example.com",
+        SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+        SHLOOK_PUBLIC_ORIGIN: "https://share.example.com",
         SHLOOK_SHARE_ORIGIN: "https://share.example.com",
         SHLOOK_OWNER_EMAIL: "owner@example.com",
       }),
-    ).toThrow("three distinct origins");
+    ).toThrow("four distinct origins");
   });
 
   it("requires verified Access context and the accepted owner identity", async () => {
@@ -299,6 +301,9 @@ describe("privacy and lifecycle", () => {
 
   it("keeps owner API mutations off artifact hosts", async () => {
     expect((await request("/api/assets", { method: "POST" }, privateHost)).status).toBe(404);
+    expect((await request("/api/assets", { method: "POST" }, publicHost, undefined)).status).toBe(
+      404,
+    );
     expect((await request("/api/assets", { method: "POST" }, shareHost, undefined)).status).toBe(
       404,
     );
@@ -312,15 +317,18 @@ describe("privacy and lifecycle", () => {
     ).toBe(403);
   });
 
-  it("serves explicitly public HTML only from the sandboxed share host", async () => {
+  it("serves explicitly public HTML only from the sandboxed public host", async () => {
     const asset = await createLiveAsset("<h1>public</h1>");
+    expect((await request(`/assets/${asset.id}/`, undefined, publicHost, undefined)).status).toBe(
+      404,
+    );
     const visibility = await request(`/api/assets/${asset.id}/visibility`, {
       method: "PATCH",
       body: JSON.stringify({ visibility: "public" }),
     });
 
     expect(visibility.status).toBe(200);
-    const shared = await request(`/assets/${asset.id}/`, undefined, shareHost, undefined);
+    const shared = await request(`/assets/${asset.id}/`, undefined, publicHost, undefined);
     expect(await shared.text()).toBe("<h1>public</h1>");
     expect(shared.headers.get("content-security-policy")).toContain("sandbox");
 
@@ -331,8 +339,11 @@ describe("privacy and lifecycle", () => {
       method: "PATCH",
       body: JSON.stringify({ visibility: "public" }),
     });
-    const sharedSvg = await request(`/assets/${svg.id}/`, undefined, shareHost, undefined);
+    const sharedSvg = await request(`/assets/${svg.id}/`, undefined, publicHost, undefined);
     expect(sharedSvg.headers.get("content-security-policy")).toContain("sandbox");
+    expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
+      404,
+    );
   });
 
   it("stores a hash plus encrypted recovery data and serves a newly issued secret capability", async () => {
@@ -358,13 +369,16 @@ describe("privacy and lifecycle", () => {
         env.SHLOOK_SECRET_ENCRYPTION_KEY,
       ),
     ).resolves.toBe(body.secret);
-    expect(await (await request("/")).text()).toContain(body.url);
     expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
       404,
     );
     expect(
       await (await request(new URL(body.url).pathname, undefined, shareHost, undefined)).text(),
     ).toBe("secret");
+    expect(
+      (await request(new URL(body.url).pathname, undefined, publicHost, undefined)).status,
+    ).toBe(404);
+    expect(await (await request("/")).text()).toContain(body.url);
   });
 
   it("rotates and revokes secret capabilities", async () => {
@@ -435,7 +449,7 @@ describe("privacy and lifecycle", () => {
       body: JSON.stringify({ shareExpiresAt: "2000-01-01T00:00:00.000Z" }),
     });
 
-    expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
+    expect((await request(`/assets/${asset.id}/`, undefined, publicHost, undefined)).status).toBe(
       404,
     );
     expect(await (await request(`/assets/${asset.id}/`, undefined, privateHost)).text()).toBe(

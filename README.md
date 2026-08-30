@@ -6,13 +6,16 @@ sharing require an explicit visibility change.
 
 ## Security model
 
-A deployment has three browser origins with different trust levels:
+A deployment has four browser origins with different trust levels:
 
 | Origin  | Purpose                                          | Cloudflare Access |
 | ------- | ------------------------------------------------ | ----------------- |
 | Owner   | Owner UI, health check, and all `/api` mutations | Required          |
 | Private | Owner-authenticated artifact viewing             | Required          |
-| Share   | Explicitly public and capability-link artifacts  | Not enabled       |
+| Public  | Stable public artifact URLs                      | Not enabled       |
+| Share   | Secret capability-link artifacts                 | Not enabled       |
+
+All four must be distinct, pathless HTTPS origins.
 
 Untrusted artifacts can contain active HTML and JavaScript. They must never share an origin
 with the owner UI or mutation API: same-origin artifact code could send owner-authorized API
@@ -23,16 +26,19 @@ requests. For that reason, one-origin path multiplexing such as `/api`, `/privat
 
 Choose one of these secure topologies:
 
-1. **Account with a domain:** assign three distinct hostnames, for example
-   `owner.example.com`, `private.example.com`, and `share.example.com`. Disable the
-   `workers.dev` and preview URLs so they cannot bypass Access.
-2. **Account without a domain:** deploy three distinct Worker names. Their production URLs
-   become three origins such as `shlook-owner.<workers-subdomain>.workers.dev`,
-   `shlook-private.<workers-subdomain>.workers.dev`, and
+1. **Account with a domain:** deploy one Worker with four custom hostnames, for example
+   `owner.example.com`, `private.example.com`, `public.example.com`, and `share.example.com`.
+   Wrangler routes with `custom_domain: true` manage custom-domain DNS and certificates during
+   deployment. Disable the `workers.dev` and preview URLs so they cannot bypass the hostname
+   policies.
+2. **Account without a domain:** deploy four distinct Worker names. Their production URLs
+   become four origins such as `shlook-owner.<workers-subdomain>.workers.dev`,
+   `shlook-private.<workers-subdomain>.workers.dev`,
+   `shlook-public.<workers-subdomain>.workers.dev`, and
    `shlook-share.<workers-subdomain>.workers.dev`. Enable Access separately on the owner and
-   private `workers.dev` routes; leave only the share route unauthenticated.
+   private `workers.dev` routes; leave public and share unauthenticated.
 
-All three deployments use the same D1 database and private R2 bucket. D1 stores metadata and
+All four surfaces use the same D1 database and private R2 bucket. D1 stores metadata and
 lifecycle state; R2 stores artifact bytes and must not have an `r2.dev` URL or public custom
 domain. Apply the packaged D1 migrations before serving traffic.
 
@@ -42,6 +48,7 @@ Wrangler configuration:
 ```text
 SHLOOK_OWNER_ORIGIN=https://<owner-host>
 SHLOOK_PRIVATE_ORIGIN=https://<private-host>
+SHLOOK_PUBLIC_ORIGIN=https://<public-host>
 SHLOOK_SHARE_ORIGIN=https://<share-host>
 SHLOOK_OWNER_EMAIL=<owner-email>
 ```
@@ -55,6 +62,7 @@ Set these operator-owned values for every CLI or agent environment:
 ```bash
 export SHLOOK_API_ORIGIN="https://<owner-host>"
 export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
+export SHLOOK_PUBLIC_ORIGIN="https://<public-host>"
 export SHLOOK_SHARE_ORIGIN="https://<share-host>"
 export CF_ACCESS_CLIENT_ID="<agent-service-token-client-id>"
 export CF_ACCESS_CLIENT_SECRET="<agent-service-token-client-secret>"
@@ -62,8 +70,8 @@ export CF_ACCESS_CLIENT_SECRET="<agent-service-token-client-secret>"
 
 Do not rely on package defaults for a self-hosted installation. See
 [`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for the manual
-operator checklist. The packaged `shlook setup` command does not create D1, R2, DNS,
-Worker routes, Access applications, policies, or service tokens.
+operator checklist. The packaged `shlook setup` command does not provision Cloudflare resources,
+DNS, Worker routes, Access applications, policies, or service tokens.
 
 ## Publish an artifact
 
@@ -94,8 +102,8 @@ The creation API accepts the same metadata as JSON:
 
 - Owner: `/`, `/archive`, `/health`, and `/api/assets...`
 - Private: `/latest[/<artifact-path>]` and `/assets/<asset-id>[/<artifact-path>]`
-- Share: `/assets/<asset-id>[/<artifact-path>]` and
-  `/s/<capability>/assets/<asset-id>[/<artifact-path>]`
+- Public: `/assets/<asset-id>[/<artifact-path>]`
+- Share: `/s/<capability>/assets/<asset-id>[/<artifact-path>]`
 
 Unknown routes and artifacts unavailable to the requested audience return `404`.
 

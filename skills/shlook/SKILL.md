@@ -10,8 +10,9 @@ infer artifact content in this skill.
 
 ## Default Flow
 
-1. Require distinct `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, and
-   `SHLOOK_SHARE_ORIGIN` values plus the agent's Cloudflare Access service-token credentials.
+1. Require distinct, pathless HTTPS `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`,
+   `SHLOOK_PUBLIC_ORIGIN`, and `SHLOOK_SHARE_ORIGIN` values plus the agent's Cloudflare Access
+   service-token credentials.
 2. Run `shlook auth check --json`.
 3. If infrastructure is not ready, stop and read `references/setup.md`. Setup is an
    operator-owned manual process; do not claim that `shlook setup` provisions Cloudflare.

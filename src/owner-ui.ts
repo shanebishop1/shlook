@@ -82,7 +82,7 @@ function assetRows(
   asset: OwnerAsset,
   latest: boolean,
   privateOrigin: string,
-  shareOrigin: string,
+  publicOrigin: string,
 ): string {
   const id = escapeHtml(asset.id);
   const name = escapeHtml(asset.name);
@@ -91,7 +91,7 @@ function assetRows(
     `${asset.id} ${asset.name} ${asset.description ?? ""}`.toLowerCase(),
   );
   const privateUrl = `${privateOrigin}/assets/${id}/`;
-  const publicUrl = `${shareOrigin}/assets/${id}/`;
+  const publicUrl = `${publicOrigin}/assets/${id}/`;
   const secretUrl = asset.secret_url === null ? "" : escapeHtml(asset.secret_url);
   const shareUrl =
     asset.visibility === "public" ? publicUrl : asset.visibility === "secret_link" ? secretUrl : "";
@@ -110,7 +110,7 @@ function assetRows(
 
   return `<tr class="artifact-row" data-record="${id}" data-search-text="${searchText}" data-search="${searchText} ${asset.visibility}" data-visibility="${asset.visibility}" aria-selected="false">
     <td class="preview-cell"><button class="preview-button" type="button" data-inspect aria-label="Inspect ${name}">${previewMedia(privateUrl, asset.name)}</button></td>
-     <td><a class="artifact-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer"><span class="artifact-title">${name}${latest ? '<span class="latest">Latest</span>' : ""}</span>${description ? `<span class="artifact-summary">${description}</span>` : ""}<span class="artifact-id">${id}</span></a></td>
+     <td><a class="artifact-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer"><span class="artifact-title"><span class="artifact-name">${name}</span>${latest ? '<span class="latest">Latest</span>' : ""}</span>${description ? `<span class="artifact-summary">${description}</span>` : ""}<span class="artifact-id">${id}</span></a></td>
      <td>${visibilityMenu(asset, "row")}</td>
     <td>${shareExpiry}</td>
     <td>${hardExpiry}</td>
@@ -191,14 +191,19 @@ function themeStyles(): string {
   return `:root{--ink:#202821;--muted:#6f7368;--faint:#eee9dc;--line:#d8d0c0;--line-strong:#b8ad99;--accent:#285e46;--accent-hover:#1f4e3a;--on-accent:#fffaf0;--owner-dot:#2f7153;--danger:#99443a;--danger-soft:#fae9e4;--paper:#f4f0e6;--white:#fbf8f0;--hover:#f1ecdf;--preview:#e7e1d4;--preview-large:#ded7c9;--accent-soft:#dfe8dd;--menu-shadow:0 12px 30px #3b31241f;--shadow:0 12px 32px #3b312418}html[data-theme="dark"]{--ink:#f0eee8;--muted:#b0b4ac;--faint:#353a35;--line:#454c45;--line-strong:#606960;--accent:#d4a06d;--accent-hover:#e0ae7c;--on-accent:#2c241c;--owner-dot:#d4a06d;--danger:#f0a09a;--danger-soft:#4a302d;--paper:#252925;--white:#2d322e;--hover:#363c37;--preview:#3b413c;--preview-large:#333834;--accent-soft:#49392d;--menu-shadow:0 16px 36px #171a1780;--shadow:0 16px 36px #171a1766}:focus-visible{outline-color:var(--accent)}.owner-mark:before{background:var(--owner-dot)}.artifact-row:hover{background:var(--hover)}.artifact-summary{display:-webkit-box;margin-top:5px;overflow:hidden;color:var(--muted);font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:1}.meta{color:var(--ink);opacity:.82}.inspect-button,.button{color:var(--ink)}.button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.button.primary:hover{background:var(--accent-hover)}.confirm p{color:var(--danger)}.panel-head .panel-description{max-width:420px;margin-top:8px;color:var(--muted);font:12px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:normal}.panel-head .panel-id{margin-top:6px;color:var(--muted);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}html[data-theme="dark"] .badge.public{color:#e3b583}html[data-theme="dark"] .badge.private{color:#c4c8c1}html[data-theme="dark"] .badge.secret_link{color:#d9bd94}html[data-theme="dark"] .button.primary{color:var(--on-accent)}html[data-theme="dark"] .button.primary:hover{background:var(--accent-hover)}@media(max-width:900px){.artifact-summary{-webkit-line-clamp:2}}`;
 }
 
+function darkThemeStyles(): string {
+  return `html[data-theme="dark"]{--ink:#eeede7;--muted:#a5aaa2;--faint:#20251f;--line:#303630;--line-strong:#4b534b;--accent:#d6a36f;--accent-hover:#e3b27e;--on-accent:#211a14;--owner-dot:#d6a36f;--danger:#efa09a;--danger-soft:#351f1d;--paper:#0c0f0d;--white:#141814;--hover:#1d221e;--preview:#222722;--preview-large:#191d1a;--accent-soft:#31251d;--menu-shadow:0 18px 42px #000c;--shadow:0 18px 42px #0009}`;
+}
+
 function behaviorStyles(): string {
-  return `th:nth-child(7){width:104px}.row-action{gap:6px}.row-copy svg{width:17px}.visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}`;
+  return `html{scrollbar-gutter:stable}.artifact-link:hover .artifact-title,.artifact-link:focus-visible .artifact-title{text-decoration:none}.artifact-link:hover .artifact-name,.artifact-link:focus-visible .artifact-name{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}th:nth-child(7){width:104px}.row-action{gap:6px}.row-copy svg{width:17px}.visibility-select .custom-trigger:disabled{cursor:wait;opacity:1}`;
 }
 
 export async function ownerPage(
   request: Request,
   db: D1Database,
   privateOrigin: string,
+  publicOrigin: string,
   shareOrigin: string,
   secretEncryptionKey?: string,
 ): Promise<Response> {
@@ -251,7 +256,7 @@ export async function ownerPage(
   const nonce = btoa(String.fromCharCode(...nonceBytes));
   const rows = assets
     .map((asset, index) =>
-      assetRows(asset, offset === 0 && index === 0, privateOrigin, shareOrigin),
+      assetRows(asset, offset === 0 && index === 0, privateOrigin, publicOrigin),
     )
     .join("");
   const previous =
@@ -262,7 +267,7 @@ export async function ownerPage(
     results.length > pageSize
       ? `<a href="/?offset=${offset + pageSize}">Older →</a>`
       : "<span></span>";
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>shlook / owner archive</title><style nonce="${nonce}">${styles()}${interactionStyles()}${themeStyles()}${behaviorStyles()}</style></head><body>
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>shlook / owner archive</title><style nonce="${nonce}">${styles()}${interactionStyles()}${themeStyles()}${darkThemeStyles()}${behaviorStyles()}</style></head><body>
   <header class="masthead"><div class="shell"><div class="identity"><span class="wordmark">shlook</span><span class="context">Owner archive</span></div><div class="header-actions"><span class="owner-mark">Owner access</span><button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to dark mode"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="moon" d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><g class="sun" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></div></div></header>
   <main class="shell"><div class="page-heading"><div><h1>Artifact archive</h1><p>Inspect and manage generated artifacts.</p></div><span class="count" data-count>${assets.length} ${assets.length === 1 ? "artifact" : "artifacts"}</span></div>
   <div class="toolbar" aria-label="Archive controls"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="sr-only">Search artifacts</span><input data-search type="search" placeholder="Search name, description, or ID" autocomplete="off"></label><div class="filter-wrap"><span>Visibility</span><div class="custom-select filter-select" data-filter-menu data-value="all"><button class="custom-trigger" type="button" data-menu-button aria-haspopup="listbox" aria-expanded="false"><span data-menu-label>All visibility</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button><div class="custom-options" data-menu-list role="listbox" hidden><button type="button" role="option" data-filter-option="all" aria-selected="true">All visibility</button><button type="button" role="option" data-filter-option="public" aria-selected="false">Public</button><button type="button" role="option" data-filter-option="private" aria-selected="false">Private</button><button type="button" role="option" data-filter-option="secret_link" aria-selected="false">Secret link</button></div></div></div></div>

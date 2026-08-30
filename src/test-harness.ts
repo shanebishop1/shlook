@@ -5,6 +5,7 @@ import { handleRequest, type Env } from "./index";
 
 export const ownerHost = "owner.example.com";
 export const privateHost = "private.example.com";
+export const publicHost = "public.example.com";
 export const shareHost = "share.example.com";
 
 const worker = handleRequest as (

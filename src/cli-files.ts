@@ -94,17 +94,21 @@ export function setupPlanData(
   origins: {
     owner?: string;
     private?: string;
+    public?: string;
     share?: string;
   },
 ) {
   return {
     mode: "plan",
     ready:
-      origins.owner !== undefined && origins.private !== undefined && origins.share !== undefined,
+      origins.owner !== undefined &&
+      origins.private !== undefined &&
+      origins.public !== undefined &&
+      origins.share !== undefined,
     resources: {
       workers: {
-        customDomains: ["one Worker with three custom hostnames"],
-        workersDev: ["shlook-owner", "shlook-private", "shlook-share"],
+        customDomains: ["one Worker with four custom hostnames"],
+        workersDev: ["shlook-owner", "shlook-private", "shlook-public", "shlook-share"],
       },
       bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
       names: "operator_owned",
@@ -114,7 +118,7 @@ export function setupPlanData(
       applications: ["owner origin", "private origin"],
       serviceToken: "agent owner API authentication",
       policy: "owner email and service token",
-      publicOrigin: "share origin remains outside Access",
+      publicOrigins: "public and share origins remain outside Access",
     },
     automation: "not_applied",
     next: "follow the packaged setup reference and create an operator-owned Wrangler config",

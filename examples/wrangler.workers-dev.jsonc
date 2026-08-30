@@ -12,6 +12,7 @@
       "vars": {
         "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
         "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_PUBLIC_ORIGIN": "https://shlook-public.<workers-subdomain>.workers.dev",
         "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
         "SHLOOK_OWNER_EMAIL": "<owner-email>",
       },
@@ -39,6 +40,32 @@
       "vars": {
         "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
         "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_PUBLIC_ORIGIN": "https://shlook-public.<workers-subdomain>.workers.dev",
+        "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
+        "SHLOOK_OWNER_EMAIL": "<owner-email>",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "<database-name>",
+          "database_id": "<database-id>",
+          "migrations_dir": "node_modules/shlook/migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "ASSETS",
+          "bucket_name": "<private-bucket-name>",
+        },
+      ],
+    },
+    "public": {
+      "name": "shlook-public",
+      "workers_dev": true,
+      "vars": {
+        "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
+        "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_PUBLIC_ORIGIN": "https://shlook-public.<workers-subdomain>.workers.dev",
         "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
         "SHLOOK_OWNER_EMAIL": "<owner-email>",
       },
@@ -63,6 +90,7 @@
       "vars": {
         "SHLOOK_OWNER_ORIGIN": "https://shlook-owner.<workers-subdomain>.workers.dev",
         "SHLOOK_PRIVATE_ORIGIN": "https://shlook-private.<workers-subdomain>.workers.dev",
+        "SHLOOK_PUBLIC_ORIGIN": "https://shlook-public.<workers-subdomain>.workers.dev",
         "SHLOOK_SHARE_ORIGIN": "https://shlook-share.<workers-subdomain>.workers.dev",
         "SHLOOK_OWNER_EMAIL": "<owner-email>",
       },

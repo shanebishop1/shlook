@@ -312,10 +312,18 @@ async function route(
   const url = new URL(request.url);
   const config = deploymentConfig(env);
   const requestOrigin = url.origin;
-  if (![config.ownerOrigin, config.privateOrigin, config.shareOrigin].includes(requestOrigin)) {
+  if (
+    ![config.ownerOrigin, config.privateOrigin, config.publicOrigin, config.shareOrigin].includes(
+      requestOrigin,
+    )
+  ) {
     return error("not_found", 404);
   }
-  if (requestOrigin !== config.shareOrigin && !(await hasOwnerAccess(config.ownerEmail, ctx))) {
+  if (
+    requestOrigin !== config.publicOrigin &&
+    requestOrigin !== config.shareOrigin &&
+    !(await hasOwnerAccess(config.ownerEmail, ctx))
+  ) {
     return error("access_required", 403);
   }
 
@@ -326,6 +334,13 @@ async function route(
     const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
     if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
       return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "private");
+    return error("not_found", 404);
+  }
+
+  if (requestOrigin === config.publicOrigin) {
+    const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
+    if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
+      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "public");
     return error("not_found", 404);
   }
 
@@ -344,9 +359,6 @@ async function route(
         "secret",
         secret[1],
       );
-    const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
-    if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
-      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "public");
     return error("not_found", 404);
   }
 
@@ -367,6 +379,7 @@ async function route(
       request,
       env.DB,
       config.privateOrigin,
+      config.publicOrigin,
       config.shareOrigin,
       env.SHLOOK_SECRET_ENCRYPTION_KEY,
     );

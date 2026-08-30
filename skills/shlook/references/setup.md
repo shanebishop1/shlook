@@ -20,6 +20,7 @@ Record these values before deploying:
 | R2              | `<private-bucket-name>`                    |
 | Owner surface   | `<owner-worker-name>` / `<owner-host>`     |
 | Private surface | `<private-worker-name>` / `<private-host>` |
+| Public surface  | `<public-worker-name>` / `<public-host>`   |
 | Share surface   | `<share-worker-name>` / `<share-host>`     |
 | Human identity  | `<owner-email>`                            |
 | Agent identity  | `<access-service-token-id>` and secret     |
@@ -56,11 +57,11 @@ The package does not automate this checklist.
    Copy the returned D1 ID into every database binding in `wrangler.jsonc`.
 
 3. In the operator Wrangler configuration, bind the same database as `DB` and bucket as
-   `ASSETS` for all three surfaces. Point D1 migrations at the package's `migrations/`
-   directory. Set all four Worker variables in every deployment/environment:
-   `SHLOOK_OWNER_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, `SHLOOK_SHARE_ORIGIN`, and
-   `SHLOOK_OWNER_EMAIL`. Wrangler `vars` and bindings do not inherit into named environments,
-   so the no-domain template repeats them intentionally.
+   `ASSETS` for all four surfaces. Point D1 migrations at the package's `migrations/`
+   directory. Set all five Worker variables in every deployment/environment:
+   `SHLOOK_OWNER_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`, `SHLOOK_PUBLIC_ORIGIN`,
+   `SHLOOK_SHARE_ORIGIN`, and `SHLOOK_OWNER_EMAIL`. Wrangler `vars` and bindings do not inherit
+   into named environments, so the no-domain template repeats them intentionally.
 4. Generate the secret-link encryption key without printing it and store it as a Worker secret.
    The custom-domain topology needs it on the shared Worker; the no-domain topology needs it
    only on the owner Worker:
@@ -83,45 +84,51 @@ The package does not automate this checklist.
    # Custom-domain template:
    npx wrangler d1 migrations apply <database-name> --remote --config <operator-config>
 
-   # workers.dev template (the same database is shared by all three environments):
+   # workers.dev template (the same database is shared by all four environments):
    npx wrangler d1 migrations apply <database-name> --remote --config <operator-config> --env owner
    ```
 
-6. Deploy three isolated origins:
-   - **With a domain:** route the owner, private, and share surfaces to three distinct
-     hostnames. Turn off `workers.dev` and preview URLs for protected deployments.
-   - **Without a domain:** deploy three distinct Worker names with `workers_dev` enabled. Use
-     their three production `workers.dev` URLs as the origins.
+6. Deploy four isolated, pathless HTTPS origins:
+   - **With a domain:** deploy one Worker with four distinct custom hostnames for the owner,
+     private, public, and share surfaces. Routes configured with `custom_domain: true` make
+     Wrangler manage the custom-domain DNS and certificates at deploy. Turn off the Worker's
+     `workers.dev` and preview URLs.
+   - **Without a domain:** deploy four distinct Worker names with `workers_dev` enabled. Use
+     their four production `workers.dev` URLs as the origins. All four Workers share D1 and R2.
 
    The packaged templates support these commands:
 
    ```bash
-   # One Worker with three custom domains:
+   # One Worker with four custom domains:
    npx wrangler deploy --config wrangler.jsonc
 
-   # Three workers.dev Workers:
+   # Four workers.dev Workers:
    npx wrangler deploy --config wrangler.jsonc --env owner
    npx wrangler deploy --config wrangler.jsonc --env private
+   npx wrangler deploy --config wrangler.jsonc --env public
    npx wrangler deploy --config wrangler.jsonc --env share
    ```
 
 7. Configure Cloudflare Access only on the owner and private origins. Add an Allow policy for
-   exactly `<owner-email>` and a Service Auth policy containing the agent service token. Do
-   not protect the share origin with Access. In custom-domain mode, create hostname-scoped
-   self-hosted Access applications for the owner and private hostnames. Do not enable the
-   dashboard's Worker-wide **Protect this Worker** control on the shared Worker, because that
-   would also challenge the public share hostname.
-8. Give the agent the service-token credentials and all three origins:
+   exactly `<owner-email>` and a Service Auth policy containing the agent service token. Keep
+   the public and share origins intentionally outside Access; their hosts accept only direct
+   public paths and capability paths, respectively. In custom-domain mode, create
+   hostname-scoped self-hosted Access applications for the owner and private hostnames. Do not
+   enable the dashboard's Worker-wide **Protect this Worker** control on the shared Worker,
+   because that would also challenge the public and share hostnames.
+8. Give the agent the service-token credentials and all four origins:
 
    ```bash
    export CF_ACCESS_CLIENT_ID="<access-service-token-client-id>"
    export CF_ACCESS_CLIENT_SECRET="<access-service-token-client-secret>"
    export SHLOOK_API_ORIGIN="https://<owner-host>"
    export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
+   export SHLOOK_PUBLIC_ORIGIN="https://<public-host>"
    export SHLOOK_SHARE_ORIGIN="https://<share-host>"
    ```
 
-   Use each URL's origin only: HTTPS scheme plus hostname, with no path.
+   Use each URL's origin only: HTTPS scheme plus hostname, with no path. All four origins must
+   be distinct.
 
 9. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
 
@@ -129,5 +136,7 @@ The package does not automate this checklist.
 
 `shlook setup --plan --json` reports the portable topology and currently supplied origins; it
 is not a remote Cloudflare discovery or provisioning tool. `shlook setup --apply --json`
-refuses mutation and points back to this checklist. Use an operator-owned configuration so an
+refuses mutation and points back to this checklist. The operator owns resource and hostname
+selection; Wrangler's `custom_domain: true` deploy behavior, not shlook setup, manages the
+corresponding custom-domain DNS and certificates. Use an operator-owned configuration so an
 installed package can never deploy another operator's account, resource IDs, or hostnames.

@@ -15,6 +15,7 @@ export default defineConfig(async () => {
             TEST_MIGRATIONS: migrations,
             SHLOOK_OWNER_ORIGIN: "https://owner.example.com",
             SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+            SHLOOK_PUBLIC_ORIGIN: "https://public.example.com",
             SHLOOK_SHARE_ORIGIN: "https://share.example.com",
             SHLOOK_OWNER_EMAIL: "owner@example.com",
             SHLOOK_SECRET_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",

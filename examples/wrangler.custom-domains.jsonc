@@ -9,11 +9,13 @@
   "routes": [
     { "pattern": "<owner-hostname>", "custom_domain": true },
     { "pattern": "<private-hostname>", "custom_domain": true },
+    { "pattern": "<public-hostname>", "custom_domain": true },
     { "pattern": "<share-hostname>", "custom_domain": true },
   ],
   "vars": {
     "SHLOOK_OWNER_ORIGIN": "https://<owner-hostname>",
     "SHLOOK_PRIVATE_ORIGIN": "https://<private-hostname>",
+    "SHLOOK_PUBLIC_ORIGIN": "https://<public-hostname>",
     "SHLOOK_SHARE_ORIGIN": "https://<share-hostname>",
     "SHLOOK_OWNER_EMAIL": "<owner-email>",
   },

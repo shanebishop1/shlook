@@ -4,6 +4,7 @@ import { encryptSecret } from "./secret-crypto";
 export interface DeploymentEnv {
   SHLOOK_OWNER_ORIGIN: string;
   SHLOOK_PRIVATE_ORIGIN: string;
+  SHLOOK_PUBLIC_ORIGIN: string;
   SHLOOK_SHARE_ORIGIN: string;
   SHLOOK_OWNER_EMAIL: string;
   SHLOOK_SECRET_ENCRYPTION_KEY?: string;
@@ -12,6 +13,7 @@ export interface DeploymentEnv {
 export interface DeploymentConfig {
   ownerOrigin: string;
   privateOrigin: string;
+  publicOrigin: string;
   shareOrigin: string;
   ownerEmail: string;
 }
@@ -34,15 +36,16 @@ function configuredOrigin(value: string): string {
 export function deploymentConfig(env: DeploymentEnv): DeploymentConfig {
   const ownerOrigin = configuredOrigin(env.SHLOOK_OWNER_ORIGIN);
   const privateOrigin = configuredOrigin(env.SHLOOK_PRIVATE_ORIGIN);
+  const publicOrigin = configuredOrigin(env.SHLOOK_PUBLIC_ORIGIN);
   const shareOrigin = configuredOrigin(env.SHLOOK_SHARE_ORIGIN);
-  if (new Set([ownerOrigin, privateOrigin, shareOrigin]).size !== 3) {
-    throw new Error("shlook requires three distinct origins");
+  if (new Set([ownerOrigin, privateOrigin, publicOrigin, shareOrigin]).size !== 4) {
+    throw new Error("shlook requires four distinct origins");
   }
   const ownerEmail = env.SHLOOK_OWNER_EMAIL.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
     throw new Error("SHLOOK_OWNER_EMAIL must be an email address");
   }
-  return { ownerOrigin, privateOrigin, shareOrigin, ownerEmail };
+  return { ownerOrigin, privateOrigin, publicOrigin, shareOrigin, ownerEmail };
 }
 
 export interface PrivacyAsset {
