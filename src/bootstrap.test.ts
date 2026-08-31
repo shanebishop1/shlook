@@ -141,6 +141,12 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Share expiration");
     expect(body).toContain("Artifact expiration");
     expect(body).toContain("Clear expirations");
+    expect(body).toContain(`data-local-time datetime="${now}"`);
+    expect(body).toContain(
+      "new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'})",
+    );
+    expect(body).toContain("timeZoneName:'short'");
+    expect(body).toContain("zone.textContent=localTime.format(date)");
     expect(body).toContain("Artifact no longer exists. Refreshing...");
     expect(body).toContain("card.dataset.detail+path");
     expect(body).not.toContain("card.dataset.id+path");

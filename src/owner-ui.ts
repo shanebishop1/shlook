@@ -69,7 +69,7 @@ function dateLabel(value: string | null, empty: string): string {
     hour12: false,
     timeZone: "UTC",
   }).format(date);
-  return `<span class="meta">${escapeHtml(day)}<span class="meta-sub">${escapeHtml(time)} UTC</span></span>`;
+  return `<time class="meta" data-local-time datetime="${escapeHtml(date.toISOString())}">${escapeHtml(day)}<span class="meta-sub">${escapeHtml(time)} UTC</span></time>`;
 }
 
 function previewMedia(previewUrl: string, assetName: string, large = false): string {
@@ -193,6 +193,9 @@ const setTheme=theme=>{document.documentElement.dataset.theme=theme;const dark=t
 let initialTheme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';try{initialTheme=localStorage.getItem('shlook-theme')||initialTheme}catch{}setTheme(initialTheme);
 document.querySelector('[data-theme-toggle]').addEventListener('click',()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
 document.querySelectorAll('input[data-iso]').forEach(input=>{if(!input.dataset.iso)return;const date=new Date(input.dataset.iso);const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);input.value=local.toISOString().slice(0,16)});
+const localDate=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'});
+const localTime=new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
+document.querySelectorAll('[data-local-time]').forEach(element=>{const date=new Date(element.dateTime);if(Number.isNaN(date.getTime()))return;const zone=document.createElement('span');zone.className='meta-sub';zone.textContent=localTime.format(date);element.textContent=localDate.format(date);element.append(zone)});
 document.querySelector('[data-search]').addEventListener('input',filterRecords);
 document.addEventListener('keydown',event=>{const menu=event.target.closest?.('.custom-select');if(event.key==='Escape'){closeMenus();menu?.querySelector('[data-menu-button]')?.focus();return}if(!menu||!['ArrowDown','ArrowUp'].includes(event.key))return;event.preventDefault();const options=[...menu.querySelectorAll('[role="option"]:not(:disabled)')];const index=options.indexOf(document.activeElement);options[(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length]?.focus()});
 document.addEventListener('click',async event=>{const copy=event.target.closest('[data-copy-row],[data-copy-public]');if(!copy)return;event.preventDefault();event.stopImmediatePropagation();const row=copy.closest('[data-record]')||document.querySelector('[data-record="'+copy.closest('[data-detail]').dataset.detail+'"]');const card=cardForId(row.dataset.record);const url=shareUrlFor(card,row.dataset.visibility);if(!url)return;try{await navigator.clipboard.writeText(url);setStatus(card,'Share link copied.')}catch(error){reportError(card,error)}},true);
