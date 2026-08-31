@@ -78,6 +78,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain('class="brand-mark"');
     expect(body).toContain('class="brand-ribbon"');
     expect(body).toContain('class="brand-fold"');
+    expect(body).not.toContain('<span class="context">');
+    expect(body).not.toContain('<span class="owner-mark">');
     expect(body).toContain("M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z");
     expect(body).toContain(".brand-mark{width:26px;height:28px");
     expect(body).toContain(id);
@@ -111,6 +113,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain("data-search-text");
     expect(body).toContain("row.dataset.search=row.dataset.searchText+' '+value");
     expect(body).toContain("data-row-visibility");
+    expect(body).not.toMatch(/data-visibility-option="secret_link"[^>]* disabled/);
     expect(body).toContain("data-filter-option");
     expect(body).toContain('aria-haspopup="listbox"');
     expect(body).toContain('class="artifact-link"');
@@ -123,8 +126,12 @@ describe("worker bootstrap", () => {
     expect(body).toContain("data-secret-url");
     expect(body).toContain(`data-public-url="https://public.example.com/assets/${id}/"`);
     expect(body).not.toContain(`data-public-url="https://share.example.com/assets/${id}/"`);
-    expect(body).toContain(
-      "path.startsWith('/secret?')&&typeof body.url==='string')card.dataset.secretUrl=body.url",
+    expect(body).toContain("if(typeof body.url==='string')card.dataset.secretUrl=body.url");
+    expect(body).toContain("const needsSecret=value==='secret_link'&&card.dataset.hasSecret!=='1'");
+    expect(body).toContain("const path=needsSecret?'/secret?mode=create':'/visibility'");
+    expect(body).toContain("if(needsSecret){card.dataset.hasSecret='1'");
+    expect(body).not.toContain(
+      "menu.querySelector('[data-visibility-option=\"secret_link\"]').disabled",
     );
     expect(body).toContain("message.startsWith('Secret URL copied')?'Secret link copied.'");
     expect(body).toContain(
