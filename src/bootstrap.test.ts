@@ -46,7 +46,10 @@ describe("worker bootstrap", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=86400");
     expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
     expect(body).toContain('aria-label="shlook"');
-    expect(body).toContain("M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z");
+    expect(body).toContain(
+      'd="M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z" fill="#4c9874"',
+    );
+    expect(body).toContain('d="m52 54 54-12-30 32-54-14z" fill="#d6a36f"');
     expect(body).not.toContain("<script");
   });
 
@@ -82,6 +85,10 @@ describe("worker bootstrap", () => {
     expect(body).not.toContain('<span class="owner-mark">');
     expect(body).toContain("M22 29 106 11v31L52 54l54 14v31l-84 19V87l54-13-54-14z");
     expect(body).toContain(".brand-mark{width:26px;height:28px");
+    expect(body).toContain(".brand-ribbon{fill:#285e46}.brand-fold{fill:#b8783d}");
+    expect(body).toContain(
+      'html[data-theme="dark"] .brand-ribbon{fill:#4c9874}html[data-theme="dark"] .brand-fold{fill:#d6a36f}',
+    );
     expect(body).toContain(id);
     expect(body).toContain("Forest &lt;release&gt;");
     expect(body).toContain("A calm &amp; searchable archive entry");
