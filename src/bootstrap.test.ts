@@ -106,7 +106,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain(".preview-media{position:relative;overflow:hidden}");
     expect(body).toContain("pointer-events:none;transform-origin:top left");
     expect(body).toContain(".preview-frame{background:#fff}");
-    expect(body).toContain("@keyframes rise-in{from{opacity:0;transform:translateY(7px)}");
+    expect(body).toContain(
+      "@keyframes rise-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}",
+    );
     expect(body).toContain(".custom-options:not([hidden]){animation:menu-in .14s");
     expect(body).toContain(".detail-row:not([hidden]) .inspector{animation:detail-in .2s");
     expect(body).toContain(".preview-image{transition:transform .18s");
