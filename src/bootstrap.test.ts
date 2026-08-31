@@ -109,6 +109,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain(
       "@keyframes rise-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}",
     );
+    expect(body).toContain(
+      ".ledger{animation:rise-in .3s .08s cubic-bezier(.22,1,.36,1) backwards}",
+    );
     expect(body).toContain(".custom-options:not([hidden]){animation:menu-in .14s");
     expect(body).toContain(".detail-row:not([hidden]) .inspector{animation:detail-in .2s");
     expect(body).toContain(".preview-image{transition:transform .18s");
