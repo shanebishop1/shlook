@@ -177,13 +177,24 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Artifact archive");
     expect(body).toContain('placeholder="Search name, description, or ID"');
     expect(body).toContain(
-      'data-upload-form data-private-origin="https://private.example.com" data-public-origin="https://public.example.com"',
+      'data-upload-form data-step="file" data-private-origin="https://private.example.com" data-public-origin="https://public.example.com"',
     );
     expect(body).toContain('data-upload-input type="file"');
     expect(body).toContain('name="upload-visibility" value="private" checked');
     expect(body).toContain('name="upload-visibility" value="secret_link"');
     expect(body).toContain("data-upload-submit disabled");
-    expect(body).toContain("Private by default");
+    expect(body).toContain('data-upload-form data-step="file"');
+    expect(body).toContain("data-upload-config hidden");
+    expect(body).toContain("uploadForm.dataset.step='options'");
+    expect(body).toContain("Upload options");
+    expect(body).toContain("Title <span>(optional)</span>");
+    expect(body).toContain("Description <span>(optional)</span>");
+    expect(body).toContain("name:uploadName.value.trim()||uploadName.dataset.fallback");
+    expect(body).toContain(">Upload</button>");
+    expect(body).not.toContain("Choose one file to begin.");
+    expect(body).not.toContain("Private by default");
+    expect(body).not.toContain("data-upload-option-summary");
+    expect(body).not.toContain("data-upload-hint");
     expect(body).toContain("addEventListener('drop'");
     expect(body).toContain("file.name.replace(/\\.[^.]+$/,'')");
     expect(body).toContain("'/api/assets/'+id+'/files/'+encodeURIComponent(file.name)");
@@ -195,7 +206,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain("data-upload-open");
     expect(body).toContain('class="theme-toggle upload-trigger"');
     expect(body).toContain('data-upload-open aria-label="Upload a file"');
-    expect(body).not.toContain(">Upload</button>");
+    expect(body).toContain(".upload-trigger:hover svg{transform:scale(1.12)}");
+    expect(body).toContain(".visibility-choice{height:100%");
+    expect(body).toContain(".search input:focus-visible{outline:1px solid var(--line-strong)");
     expect(body).toContain('data-upload-dialog hidden role="dialog" aria-modal="true"');
     expect(body).toContain("data-upload-close");
     expect(body).toContain("uploadDialog.hidden=false");
