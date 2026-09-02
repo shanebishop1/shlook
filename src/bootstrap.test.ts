@@ -166,9 +166,11 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Artifact expiration");
     expect(body).toContain("Clear expirations");
     expect(body).toContain('data-request-delete aria-label="Delete artifact"');
-    expect(body).toContain('data-confirm hidden role="dialog" aria-modal="true"');
+    expect(body).toContain("data-confirm-for");
+    expect(body).toContain('hidden role="dialog" aria-modal="true"');
     expect(body).toContain('class="confirm-card"');
     expect(body).toContain("document.body.classList.add('confirm-open')");
+    expect(body).toContain("document.body.appendChild(confirmation)");
     expect(body).toContain("event.target===confirmation");
     expect(body).toContain("@media(min-width:901px){.large-preview{min-height:0}");
     expect(body).toContain(".large-preview .preview-image{position:absolute;inset:0}");
