@@ -186,6 +186,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain('data-upload-form data-step="file"');
     expect(body).toContain("data-upload-config hidden");
     expect(body).toContain("uploadForm.dataset.step='options'");
+    expect(body).toContain("dropZone.style.display='none'");
     expect(body).toContain("Upload options");
     expect(body).toContain("Title <span>(optional)</span>");
     expect(body).toContain("Description <span>(optional)</span>");
