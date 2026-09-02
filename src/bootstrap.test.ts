@@ -192,6 +192,12 @@ describe("worker bootstrap", () => {
     expect(body).toContain("await ownerRequest('/api/assets/'+id,{method:'DELETE'})");
     expect(body).toContain("document.execCommand('copy')");
     expect(body).toContain("data-upload-result");
+    expect(body).toContain("data-upload-open");
+    expect(body).toContain('data-upload-dialog hidden role="dialog" aria-modal="true"');
+    expect(body).toContain("data-upload-close");
+    expect(body).toContain("uploadDialog.hidden=false");
+    expect(body).toContain("uploadDialog.hidden=true");
+    expect(body).toContain(".upload-result-url{overflow-wrap:anywhere;word-break:break-word");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
     expect(body).not.toContain("Hard expires");
