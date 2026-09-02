@@ -165,6 +165,17 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Share expiration");
     expect(body).toContain("Artifact expiration");
     expect(body).toContain("Clear expirations");
+    expect(body).toContain('data-request-delete aria-label="Delete artifact"');
+    expect(body).toContain('data-confirm hidden role="dialog" aria-modal="true"');
+    expect(body).toContain('class="confirm-card"');
+    expect(body).toContain("document.body.classList.add('confirm-open')");
+    expect(body).toContain("event.target===confirmation");
+    expect(body).toContain("@media(min-width:901px){.large-preview{min-height:0}");
+    expect(body).toContain(".large-preview .preview-image{position:absolute;inset:0}");
+    expect(body).toContain('href="https://github.com/shanebishop1/shlook"');
+    expect(body).toContain('aria-label="shlook on GitHub"');
+    expect(body).toContain("Shane Bishop");
+    expect(body).toContain("2026");
     expect(body).toContain(`data-local-time datetime="${now}"`);
     expect(body).toContain(
       "new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'})",
