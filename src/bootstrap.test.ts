@@ -223,7 +223,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain('data-upload-open aria-label="Upload a file"');
     expect(body).toContain(".upload-trigger:hover svg{transform:scale(1.12)}");
     expect(body).toContain(".visibility-choice{height:100%");
-    expect(body).toContain(".search input:focus-visible{outline:1px solid var(--line-strong)");
+    expect(body).toContain(
+      'input:not([type="radio"]):focus-visible,textarea:focus-visible{outline:1px solid var(--line-strong)',
+    );
     expect(body).toContain('data-upload-dialog hidden role="dialog" aria-modal="true"');
     expect(body).toContain(".upload-form{width:min(620px,100%)");
     expect(body).toContain(".drop-zone{min-height:210px;padding:24px 64px 24px 24px");
@@ -231,6 +233,10 @@ describe("worker bootstrap", () => {
     expect(body).toContain("data-upload-close");
     expect(body).toContain("uploadDialog.hidden=false");
     expect(body).toContain("uploadDialog.hidden=true");
+    expect(body).toContain("const resetUpload=()=>");
+    expect(body).toContain("uploadInput.value=''");
+    expect(body).toContain("uploadForm.dataset.step='file'");
+    expect(body).toContain("event.stopPropagation()");
     expect(body).toContain(".upload-result-url{overflow-wrap:anywhere;word-break:break-word");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
