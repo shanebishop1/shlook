@@ -104,12 +104,17 @@ describe("worker bootstrap", () => {
     expect(body).toContain('sandbox="allow-scripts"');
     expect(body).toContain('scrolling="no"');
     expect(body).not.toContain('sandbox="allow-same-origin"');
-    expect(body).toContain("new ResizeObserver(resize).observe(media)");
+    expect(body).toContain(
+      "if(typeof ResizeObserver==='function')new ResizeObserver(resize).observe(media);else addEventListener('resize',resize,{passive:true})",
+    );
     expect(body).toContain("const renderWidth=1280");
     expect(body).toContain("if(!frame.hidden)return");
     expect(body).toContain("requestAnimationFrame(resize)");
     expect(body).toContain("frame.clientWidth!==renderWidth");
     expect(body).toContain("frame.src=frame.dataset.src");
+    expect(body).toContain(
+      "filterRecords();\ndocument.querySelectorAll('[data-preview-image]').forEach",
+    );
     expect(body).toContain(".preview-media{position:relative;overflow:hidden}");
     expect(body).toContain("pointer-events:none;transform-origin:top left");
     expect(body).toContain(".preview-frame{background:#fff}");
