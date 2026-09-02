@@ -174,6 +174,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain("event.target===confirmation");
     expect(body).toContain("@media(min-width:901px){.large-preview{min-height:0}");
     expect(body).toContain(".large-preview .preview-image{position:absolute;inset:0}");
+    expect(body).toContain("@media(max-width:900px){.large-preview{height:250px;min-height:250px}");
     expect(body).toContain('href="https://github.com/shanebishop1/shlook"');
     expect(body).toContain('aria-label="shlook on GitHub"');
     expect(body).toContain("Shane Bishop");
