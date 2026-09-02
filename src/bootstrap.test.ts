@@ -225,6 +225,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain(".visibility-choice{height:100%");
     expect(body).toContain(".search input:focus-visible{outline:1px solid var(--line-strong)");
     expect(body).toContain('data-upload-dialog hidden role="dialog" aria-modal="true"');
+    expect(body).toContain(".upload-form{width:min(620px,100%)");
+    expect(body).toContain(".drop-zone{min-height:210px;padding:24px 64px 24px 24px");
+    expect(body).toContain('html[data-theme="dark"] .drop-zone{background:#1a1c1a}');
     expect(body).toContain("data-upload-close");
     expect(body).toContain("uploadDialog.hidden=false");
     expect(body).toContain("uploadDialog.hidden=true");
