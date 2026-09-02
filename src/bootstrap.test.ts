@@ -193,6 +193,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain("document.execCommand('copy')");
     expect(body).toContain("data-upload-result");
     expect(body).toContain("data-upload-open");
+    expect(body).toContain('class="theme-toggle upload-trigger"');
+    expect(body).toContain('data-upload-open aria-label="Upload a file"');
+    expect(body).not.toContain(">Upload</button>");
     expect(body).toContain('data-upload-dialog hidden role="dialog" aria-modal="true"');
     expect(body).toContain("data-upload-close");
     expect(body).toContain("uploadDialog.hidden=false");
