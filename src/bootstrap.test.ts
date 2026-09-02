@@ -176,6 +176,22 @@ describe("worker bootstrap", () => {
     expect(body).not.toContain("card.dataset.id+path");
     expect(body).toContain("Artifact archive");
     expect(body).toContain('placeholder="Search name, description, or ID"');
+    expect(body).toContain(
+      'data-upload-form data-private-origin="https://private.example.com" data-public-origin="https://public.example.com"',
+    );
+    expect(body).toContain('data-upload-input type="file"');
+    expect(body).toContain('name="upload-visibility" value="private" checked');
+    expect(body).toContain('name="upload-visibility" value="secret_link"');
+    expect(body).toContain("data-upload-submit disabled");
+    expect(body).toContain("Private by default");
+    expect(body).toContain("addEventListener('drop'");
+    expect(body).toContain("file.name.replace(/\\.[^.]+$/,'')");
+    expect(body).toContain("'/api/assets/'+id+'/files/'+encodeURIComponent(file.name)");
+    expect(body).toContain("body:JSON.stringify({entrypoint:file.name,files:[uploaded.file]})");
+    expect(body).toContain("visibility==='secret_link'");
+    expect(body).toContain("await ownerRequest('/api/assets/'+id,{method:'DELETE'})");
+    expect(body).toContain("document.execCommand('copy')");
+    expect(body).toContain("data-upload-result");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
     expect(body).not.toContain("Hard expires");
