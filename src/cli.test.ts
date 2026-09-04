@@ -36,9 +36,27 @@ function harness(overrides: Partial<CliDependencies> = {}) {
       const options: Record<string, boolean | string> = {};
       for (let index = 0; index < argv.length; index += 1) {
         const value = argv[index];
-        if (["--json", "--plan", "--apply"].includes(value)) options[value.slice(2)] = true;
-        else if (["--entrypoint", "--offset", "--name", "--description"].includes(value))
-          options[value.slice(2)] = argv[++index];
+        if (["--json", "--plan", "--apply", "--show-connection-token"].includes(value))
+          options[value === "--show-connection-token" ? "showConnectionToken" : value.slice(2)] =
+            true;
+        else if (
+          [
+            "--entrypoint",
+            "--offset",
+            "--name",
+            "--description",
+            "--domain",
+            "--owner-email",
+            "--account-id",
+          ].includes(value)
+        )
+          options[
+            value === "--owner-email"
+              ? "ownerEmail"
+              : value === "--account-id"
+                ? "accountId"
+                : value.slice(2)
+          ] = argv[++index];
         else positionals.push(value);
       }
       return { positionals, options };
@@ -240,75 +258,83 @@ test("accepts fully explicit legacy origins without a base domain", async () => 
   expect(fetch.mock.calls[0][0]).toBe("https://owner.example.com/health");
 });
 
-test("setup plan is read-only and reports unresolved inspection conflicts", async () => {
-  const conflict = {
-    code: "remote_state_uninspected",
-    resource: "cloudflare",
-    message: "remote resources were not inspected",
-    unresolved: true,
-  };
-  const inspectSetup = vi.fn(async () => ({ inspected: ["package"], conflicts: [conflict] }));
-  const context = harness({ inspectSetup });
+test("setup parser passes flags over environment fallbacks to the Cloudflare plan", async () => {
+  const planSetup = vi.fn(async (input) => ({ mode: "plan", ready: true, input }));
+  const context = harness({
+    env: {
+      CLOUDFLARE_API_TOKEN: "bootstrap-secret",
+      SHLOOK_DOMAIN: "environment.example.com",
+      SHLOOK_OWNER_EMAIL: "environment@example.com",
+      SHLOOK_ACCOUNT_ID: "e".repeat(32),
+    },
+    planSetup,
+  });
 
-  expect(await runCli(["setup", "--plan", "--json"], context.dependencies)).toBe(0);
-  const output = JSON.parse(context.stdout[0]);
-  expect(context.dependencies.fetch).not.toHaveBeenCalled();
+  const exitCode = await runCli(
+    [
+      "setup",
+      "--plan",
+      "--domain",
+      "flag.example.com",
+      "--owner-email",
+      "flag@example.com",
+      "--account-id",
+      "f".repeat(32),
+      "--json",
+    ],
+    context.dependencies,
+  );
+  expect(exitCode, context.stderr.join("")).toBe(0);
+  expect(planSetup).toHaveBeenCalledWith({
+    domain: "flag.example.com",
+    ownerEmail: "flag@example.com",
+    accountId: "f".repeat(32),
+  });
   expect(context.dependencies.runCommand).not.toHaveBeenCalled();
-  expect(inspectSetup).toHaveBeenCalledOnce();
-  expect(output.data.resources).toMatchObject({
-    workers: {
-      customDomains: ["one Worker with four custom hostnames"],
-      workersDev: ["shlook-owner", "shlook-private", "shlook-public", "shlook-share"],
-    },
-    bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
-    names: "operator_owned",
-    origins: {
-      owner: "https://shlook.example.com",
-      private: "https://private.example.com",
-      public: "https://public.example.com",
-      share: "https://share.example.com",
-    },
-  });
-  expect(output.data.ready).toBe(true);
-  expect(output.data.access).toBeDefined();
-  expect(output.data.inspection).toEqual({ inspected: ["package"], conflicts: [conflict] });
 
-  const partial = harness({
-    inspectSetup,
-    env: { SHLOOK_API_ORIGIN: "https://owner.example.com" },
+  const fallback = harness({
+    env: context.dependencies.env,
+    planSetup,
   });
-  expect(await runCli(["setup", "--plan", "--json"], partial.dependencies)).toBe(0);
-  expect(JSON.parse(partial.stdout[0]).data).toMatchObject({
-    ready: false,
-    resources: { origins: { owner: "https://owner.example.com" } },
+  expect(await runCli(["setup", "--plan", "--json"], fallback.dependencies)).toBe(0);
+  expect(planSetup).toHaveBeenLastCalledWith({
+    domain: "environment.example.com",
+    ownerEmail: "environment@example.com",
+    accountId: "e".repeat(32),
   });
 });
 
-test("setup apply refuses mutation and points to the operator-owned setup plan", async () => {
-  const runCommand = vi.fn(async () => ({ code: 0 }));
-  const context = harness({
-    runCommand,
-    inspectSetup: vi.fn(async () => ({
-      inspected: ["package"],
-      conflicts: [
-        {
-          code: "remote_state_uninspected",
-          resource: "cloudflare",
-          message: "remote resources were not inspected",
-          unresolved: true,
-        },
-      ],
-    })),
-  });
+test("setup apply outputs a connection token only when explicitly requested", async () => {
+  const token = encodeConnectionCredential(storedCredential);
+  const applySetup = vi.fn(async (input) => ({
+    mode: "apply",
+    config: { path: "/config/shlook/deployment/wrangler.json" },
+    connection: { stored: true, path: "/config/shlook/auth.json" },
+    requestedTokenOutput: input.showConnectionToken,
+    connectionToken: token,
+  }));
+  const environment = {
+    CLOUDFLARE_API_TOKEN: "bootstrap-secret",
+    SHLOOK_DOMAIN: "example.com",
+    SHLOOK_OWNER_EMAIL: "owner@example.com",
+  };
 
-  expect(await runCli(["setup", "--apply", "--json"], context.dependencies)).toBe(2);
-  expect(runCommand).not.toHaveBeenCalled();
-  expect(context.stdout).toEqual([]);
-  expect(JSON.parse(context.stderr[0])).toMatchObject({
-    ok: false,
-    command: "setup",
-    error: { code: "setup_not_automated", details: { status: "blocked" } },
-  });
+  const normal = harness({ env: environment, applySetup });
+  expect(await runCli(["setup", "--apply", "--json"], normal.dependencies)).toBe(0);
+  expect(normal.stdout.join("") + normal.stderr.join("")).not.toContain(token);
+  expect(JSON.parse(normal.stdout[0]).data).not.toHaveProperty("connectionToken");
+
+  const explicit = harness({ env: environment, applySetup });
+  expect(
+    await runCli(["setup", "--apply", "--show-connection-token", "--json"], explicit.dependencies),
+  ).toBe(0);
+  expect(JSON.parse(explicit.stdout[0]).data.connectionToken).toBe(token);
+
+  const invalid = harness({ env: environment, planSetup: vi.fn() });
+  expect(
+    await runCli(["setup", "--plan", "--show-connection-token", "--json"], invalid.dependencies),
+  ).toBe(1);
+  expect(invalid.dependencies.planSetup).not.toHaveBeenCalled();
 });
 
 test("publish is private, rejects ancestor symlinks, and deletes failed creates", async () => {

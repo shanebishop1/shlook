@@ -6,20 +6,22 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { normalizeAssetMetadata } from "./asset-metadata.ts";
-import {
-  inspectPackagedSetup,
-  loadPublishInput,
-  sanitizeCliValue,
-  setupPlanData,
-  type PublishInput,
-  type SetupInspection,
-} from "./cli-files.ts";
+import { loadPublishInput, sanitizeCliValue, type PublishInput } from "./cli-files.ts";
 import {
   decodeConnectionCredential,
   loadConnectionCredential,
   persistConnectionCredential,
   type ConnectionCredential,
 } from "./cli-connection.ts";
+import { CloudflareSetupError, type SetupInput } from "./cli-setup.ts";
+import {
+  SetupRuntimeError,
+  applySetupRuntime,
+  planSetupRuntime,
+  type SetupCommandOptions,
+  type SetupRuntimeInput,
+  type SetupRuntimeResult,
+} from "./cli-setup-runtime.ts";
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -31,7 +33,11 @@ export interface CliDependencies {
   wranglerPath?: string;
   env: Record<string, string | undefined>;
   fetch: typeof fetch;
-  runCommand: (command: string, args: string[], cwd: string) => Promise<{ code: number }>;
+  runCommand: (
+    command: string,
+    args: string[],
+    options: SetupCommandOptions,
+  ) => Promise<{ code: number }>;
   stdout: (value: string) => void;
   stderr: (value: string) => void;
   readSecretInput?: () => Promise<string>;
@@ -39,13 +45,18 @@ export interface CliDependencies {
   loadConnection?: () => Promise<ConnectionCredential>;
   loadPublishInput?: (path: string, entrypoint?: string) => Promise<PublishInput>;
   parseArguments?: (argv: string[]) => { positionals: string[]; options: CliOptions };
-  inspectSetup?: () => Promise<SetupInspection>;
+  planSetup?: (input: SetupInput) => Promise<unknown>;
+  applySetup?: (input: SetupRuntimeInput) => Promise<SetupRuntimeResult | unknown>;
 }
 
 interface CliOptions {
   json?: boolean;
   plan?: boolean;
   apply?: boolean;
+  domain?: string;
+  ownerEmail?: string;
+  accountId?: string;
+  showConnectionToken?: boolean;
   entrypoint?: string;
   name?: string;
   description?: string;
@@ -67,11 +78,32 @@ class CliError extends Error {
   }
 }
 
-function commandRunner(command: string, args: string[], cwd: string): Promise<{ code: number }> {
+export function isolatedCommandEnvironment(
+  explicit: Readonly<Record<string, string | undefined>> = {},
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(explicit).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+}
+
+function commandRunner(
+  command: string,
+  args: string[],
+  options: SetupCommandOptions,
+): Promise<{ code: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", shell: false });
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: isolatedCommandEnvironment(options.env),
+      stdio: [options.input === undefined ? "ignore" : "pipe", "ignore", "ignore"],
+      shell: false,
+    });
     child.once("error", reject);
     child.once("exit", (code) => resolve({ code: code ?? 1 }));
+    if (options.input !== undefined) {
+      child.stdin?.once("error", reject);
+      child.stdin?.end(options.input);
+    }
   });
 }
 
@@ -115,13 +147,32 @@ function parse(argv: string[]): { positionals: string[]; options: CliOptions } {
         json: { type: "boolean" },
         plan: { type: "boolean" },
         apply: { type: "boolean" },
+        domain: { type: "string" },
+        "owner-email": { type: "string" },
+        "account-id": { type: "string" },
+        "show-connection-token": { type: "boolean" },
         entrypoint: { type: "string" },
         name: { type: "string" },
         description: { type: "string" },
         offset: { type: "string" },
       },
     });
-    return { positionals, options: values };
+    return {
+      positionals,
+      options: {
+        json: values.json,
+        plan: values.plan,
+        apply: values.apply,
+        domain: values.domain,
+        ownerEmail: values["owner-email"],
+        accountId: values["account-id"],
+        showConnectionToken: values["show-connection-token"],
+        entrypoint: values.entrypoint,
+        name: values.name,
+        description: values.description,
+        offset: values.offset,
+      },
+    };
   } catch {
     throw new CliError("usage_error", "invalid arguments");
   }
@@ -344,57 +395,74 @@ async function api(
   return responseData(response);
 }
 
-async function setupInspection(dependencies: CliDependencies): Promise<SetupInspection> {
-  return (
-    dependencies.inspectSetup?.() ??
-    inspectPackagedSetup(
-      dependencies.packageRoot ?? PACKAGE_ROOT,
-      dependencies.wranglerPath ?? resolvePinnedWrangler(),
-    )
-  );
-}
-
-async function setupPlan(dependencies: CliDependencies) {
-  const defaults =
-    dependencies.env.SHLOOK_DOMAIN === undefined
-      ? undefined
-      : defaultOrigins(configuredDomain(dependencies.env.SHLOOK_DOMAIN));
-  const configured = {
-    owner:
-      dependencies.env.SHLOOK_API_ORIGIN === undefined
-        ? defaults?.owner
-        : configuredOrigin(dependencies.env.SHLOOK_API_ORIGIN, "SHLOOK_API_ORIGIN"),
-    private:
-      dependencies.env.SHLOOK_PRIVATE_ORIGIN === undefined
-        ? defaults?.private
-        : configuredOrigin(dependencies.env.SHLOOK_PRIVATE_ORIGIN, "SHLOOK_PRIVATE_ORIGIN"),
-    public:
-      dependencies.env.SHLOOK_PUBLIC_ORIGIN === undefined
-        ? defaults?.public
-        : configuredOrigin(dependencies.env.SHLOOK_PUBLIC_ORIGIN, "SHLOOK_PUBLIC_ORIGIN"),
-    share:
-      dependencies.env.SHLOOK_SHARE_ORIGIN === undefined
-        ? defaults?.share
-        : configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN"),
-  };
-  const supplied = Object.values(configured).filter((value) => value !== undefined);
-  if (new Set(supplied).size !== supplied.length) {
-    throw new CliError("invalid_configuration", "configured shlook origins must be distinct");
+function setupInput(options: CliOptions, dependencies: CliDependencies): SetupInput {
+  const domain = options.domain ?? dependencies.env.SHLOOK_DOMAIN;
+  const ownerEmail = options.ownerEmail ?? dependencies.env.SHLOOK_OWNER_EMAIL;
+  const accountId = options.accountId ?? dependencies.env.SHLOOK_ACCOUNT_ID;
+  if (domain === undefined) {
+    throw new CliError("usage_error", "setup requires --domain or SHLOOK_DOMAIN");
   }
-  return setupPlanData(await setupInspection(dependencies), configured);
+  if (ownerEmail === undefined) {
+    throw new CliError("usage_error", "setup requires --owner-email or SHLOOK_OWNER_EMAIL");
+  }
+  return {
+    domain,
+    ownerEmail,
+    ...(accountId === undefined ? {} : { accountId }),
+  };
 }
 
-async function setupApply(dependencies: CliDependencies): Promise<never> {
-  throw new CliError(
-    "setup_not_automated",
-    "setup apply is intentionally unavailable; follow the setup reference with an operator-owned Wrangler config",
-    undefined,
-    {
-      status: "blocked",
-      plan: await setupPlan(dependencies),
-    },
-    2,
-  );
+function setupRuntimeDependencies(dependencies: CliDependencies) {
+  return {
+    env: dependencies.env,
+    fetch: dependencies.fetch,
+    packageRoot: dependencies.packageRoot ?? PACKAGE_ROOT,
+    nodeExecutable: dependencies.nodeExecutable ?? process.execPath,
+    wranglerPath: dependencies.wranglerPath ?? resolvePinnedWrangler(),
+    runCommand: dependencies.runCommand,
+    loadConnection: () =>
+      dependencies.loadConnection?.() ?? loadConnectionCredential({ env: dependencies.env }),
+    persistConnection: (credential: ConnectionCredential) =>
+      dependencies.persistConnection?.(credential) ??
+      persistConnectionCredential(credential, { env: dependencies.env }),
+  };
+}
+
+function omitConnectionToken(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const { connectionToken: _connectionToken, ...safe } = value as Record<string, unknown>;
+  return safe;
+}
+
+async function setup(
+  dependencies: CliDependencies,
+  args: string[],
+  options: CliOptions,
+): Promise<{ data: unknown; allowSecrets?: boolean }> {
+  if (args.length !== 0)
+    throw new CliError("usage_error", "setup does not accept positional values");
+  if (options.plan === options.apply) {
+    throw new CliError("usage_error", "setup requires exactly one of --plan or --apply");
+  }
+  if (options.plan && options.showConnectionToken) {
+    throw new CliError("usage_error", "--show-connection-token requires setup --apply");
+  }
+  const input = setupInput(options, dependencies);
+  if (options.plan) {
+    return {
+      data:
+        (await dependencies.planSetup?.(input)) ??
+        (await planSetupRuntime(input, setupRuntimeDependencies(dependencies))),
+    };
+  }
+  const applyInput = { ...input, showConnectionToken: options.showConnectionToken ?? false };
+  const data =
+    (await dependencies.applySetup?.(applyInput)) ??
+    (await applySetupRuntime(applyInput, setupRuntimeDependencies(dependencies)));
+  return {
+    data: options.showConnectionToken ? data : omitConnectionToken(data),
+    allowSecrets: options.showConnectionToken === true,
+  };
 }
 
 async function connect(
@@ -565,10 +633,8 @@ async function dispatch(
   if (command === "auth" && args[0] === "check")
     return { command: "auth", data: await api(dependencies, "/health") };
   if (command === "setup") {
-    if (options.plan === options.apply)
-      throw new CliError("usage_error", "setup requires exactly one of --plan or --apply");
-    if (options.plan) return { command, data: await setupPlan(dependencies) };
-    await setupApply(dependencies);
+    const result = await setup(dependencies, args, options);
+    return { command, ...result };
   }
   if (command === "status") return { command, data: await api(dependencies, "/health") };
   if (command === "publish")
@@ -651,10 +717,14 @@ export async function runCli(
     const error =
       cause instanceof CliError
         ? cause
-        : new CliError(
-            "unexpected_error",
-            cause instanceof Error ? cause.message : "unexpected error",
-          );
+        : cause instanceof CloudflareSetupError
+          ? new CliError(cause.code, cause.message, cause.status)
+          : cause instanceof SetupRuntimeError
+            ? new CliError(cause.code, cause.message)
+            : new CliError(
+                "unexpected_error",
+                cause instanceof Error ? cause.message : "unexpected error",
+              );
     const output = {
       ok: false,
       command,
