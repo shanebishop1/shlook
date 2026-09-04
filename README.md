@@ -60,24 +60,38 @@ The owner Worker also requires a 32-byte base64 encryption key stored as a Cloud
 secret named `SHLOOK_SECRET_ENCRYPTION_KEY`. It encrypts recoverable capability URLs at rest;
 never place it in `vars`, source control, or agent output.
 
-For the standard custom-domain topology, set the base domain plus the Access service token in
-every CLI or agent environment:
+For the standard custom-domain topology, `shlook setup` can provision and deploy without a
+browser. Give it a temporary Cloudflare API token, then plan and apply:
 
 ```bash
-export SHLOOK_DOMAIN="<domain>"
-export CF_ACCESS_CLIENT_ID="<agent-service-token-client-id>"
-export CF_ACCESS_CLIENT_SECRET="<agent-service-token-client-secret>"
+export CLOUDFLARE_API_TOKEN="<temporary-provisioning-token>"
+shlook setup --plan --domain "example.com" --owner-email "owner@example.com" --json
+shlook setup --apply --domain "example.com" --owner-email "owner@example.com" --json
 ```
 
-The CLI derives `https://shlook.<domain>`, `https://private.<domain>`,
-`https://public.<domain>`, and `https://share.<domain>`. For a nonstandard topology, override
-any derived address with its corresponding `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`,
-`SHLOOK_PUBLIC_ORIGIN`, or `SHLOOK_SHARE_ORIGIN` environment variable.
+`CLOUDFLARE_API_TOKEN` is preferred; `SHLOOK_CF_TOKEN` is a compatibility alias. Domain, owner
+email, and optional account ID also fall back to `SHLOOK_DOMAIN`, `SHLOOK_OWNER_EMAIL`, and
+`SHLOOK_ACCOUNT_ID`. The broad provisioning token is used only for setup and is never persisted.
+It must be able to discover account and zone resources and manage D1, R2, Access applications,
+policies and service tokens, Worker deployment/custom domains, and Worker secrets.
 
-Do not rely on package defaults for a self-hosted installation. See
-[`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for the manual
-operator checklist. The packaged `shlook setup` command does not provision Cloudflare resources,
-DNS, Worker routes, Access applications, policies, or service tokens.
+Setup stores generated runtime Access credentials in
+`${XDG_CONFIG_HOME:-$HOME/.config}/shlook/auth.json`, its Wrangler configuration in
+`.../shlook/deployment/wrangler.json`, and the generated encryption key in
+`.../shlook/deployment/secret-encryption-key`. To transfer only the runtime connection, rerun
+apply with `--show-connection-token` and pipe that bearer secret to another installation without
+putting it in argv:
+
+```bash
+printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json
+```
+
+The connection token contains only the deployment domain and Access service-token credentials;
+it cannot provision Cloudflare. Existing environment profiles remain supported: set
+`CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `SHLOOK_DOMAIN`, or use the four explicit
+origin variables for a nonstandard topology. See
+[`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for details and the
+manual no-domain deployment.
 
 ## Publish an artifact
 

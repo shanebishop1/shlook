@@ -7,9 +7,10 @@ Required runtime: Node.js 24 or later. Install the released CLI with
 ## Package values and operator values
 
 The package owns the Worker entry point, migrations, route grammar, and binding names `DB` and
-`ASSETS`. The operator owns every Cloudflare resource name, hostname, ID, credential, and
-email address. Keep those values in an operator-controlled Wrangler configuration and secret
-store; do not add them to package files.
+`ASSETS`. Automated custom-domain setup also uses the fixed resource names `shlook` for the D1
+database, Worker, and Access service token, `shlook-assets` for R2, and `shlook-owner` and
+`shlook-private` for Access applications. The operator owns the account, domain, email, IDs, and
+credentials. Manual deployments may choose their resource names.
 
 Record these values before deploying:
 
@@ -41,9 +42,64 @@ cp node_modules/shlook/examples/wrangler.workers-dev.jsonc wrangler.jsonc
 Replace every angle-bracket placeholder before running Wrangler. Never edit the installed
 package under `node_modules`.
 
+## Headless custom-domain setup
+
+Setup needs no browser, Wrangler login, OAuth, or interactive prompt. Use a temporary Cloudflare
+API token for provisioning:
+
+```bash
+export CLOUDFLARE_API_TOKEN="<temporary-provisioning-token>"
+shlook setup --plan --domain "example.com" --owner-email "owner@example.com" --json
+shlook setup --apply --domain "example.com" --owner-email "owner@example.com" --json
+```
+
+`CLOUDFLARE_API_TOKEN` is preferred; `SHLOOK_CF_TOKEN` is an alias. If both are set to different
+values, setup stops. `--domain`, `--owner-email`, and optional `--account-id` fall back to
+`SHLOOK_DOMAIN`, `SHLOOK_OWNER_EMAIL`, and `SHLOOK_ACCOUNT_ID`. The provisioning token must permit:
+
+- account membership and zone discovery;
+- D1 and R2 read/write;
+- Access applications, policies, and service tokens read/write;
+- Workers custom-domain inspection and management;
+- Worker script deployment and Worker secret editing.
+
+Plan verifies the token and discovers existing resources without mutation. Apply creates or
+reuses exact matches, writes the deployment configuration, applies D1 migrations, deploys the
+Worker and its four custom domains, uploads the encryption secret, verifies owner and private
+Access, and stores the generated runtime connection. The broad provisioning token is passed only
+to the setup operations and a restricted Wrangler child environment; it is never persisted.
+
+Setup writes mode-restricted files below `${XDG_CONFIG_HOME:-$HOME/.config}/shlook`:
+
+```text
+auth.json                         generated Access service token and domain
+deployment/wrangler.json         generated deployment IDs and configuration
+deployment/secret-encryption-key generated runtime encryption secret
+```
+
+The generated Access service token is artifact/runtime authentication only; it cannot provision
+Cloudflare. Apply stores it automatically and omits a transferable token from normal output. Use
+`--show-connection-token` only when a second installation needs to connect, treat the result as a
+bearer secret, and deliver it through stdin rather than argv:
+
+```bash
+printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json
+```
+
+`connect` verifies the owner health endpoint before writing `auth.json`. Existing environment
+profiles remain compatible and take precedence when any profile variable is set: provide
+`CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `SHLOOK_DOMAIN`, or both Access credentials
+and all four explicit origin variables. Partial profiles fail rather than borrowing stored values.
+
+Rerunning apply reuses resources only when their configuration matches exactly, then reapplies
+migrations, redeploys, reuploads the persisted encryption key, verifies, and refreshes local auth.
+Conflicting resources stop the run. Because Cloudflare reveals a service-token secret only when
+created, a first apply that creates it but fails before local connection storage cannot recover
+that secret on rerun; remove/recreate the incomplete service token before retrying.
+
 ## Manual deployment checklist
 
-The package does not automate this checklist.
+Use this checklist for no-domain or other nonstandard deployments.
 
 1. Authenticate Wrangler to the operator's Cloudflare account.
 2. Create one D1 database and one R2 bucket. Keep R2 private: do not enable `r2.dev` or attach
@@ -130,12 +186,3 @@ nonstandard topology, override any derived address with `SHLOOK_API_ORIGIN`,
 be distinct HTTPS origins with no path.
 
 9. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
-
-## About `shlook setup`
-
-`shlook setup --plan --json` reports the portable topology and currently supplied origins; it
-is not a remote Cloudflare discovery or provisioning tool. `shlook setup --apply --json`
-refuses mutation and points back to this checklist. The operator owns resource and hostname
-selection; Wrangler's `custom_domain: true` deploy behavior, not shlook setup, manages the
-corresponding custom-domain DNS and certificates. Use an operator-owned configuration so an
-installed package can never deploy another operator's account, resource IDs, or hostnames.

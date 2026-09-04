@@ -1,8 +1,9 @@
 # Verification
 
-Before testing, confirm that `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`,
-`SHLOOK_PUBLIC_ORIGIN`, and `SHLOOK_SHARE_ORIGIN` are four distinct, pathless HTTPS origins.
-Confirm that R2 has no public `r2.dev` URL/custom domain and that all D1 migrations are applied.
+Before testing, confirm that the resolved owner, private, public, and share addresses are four
+distinct, pathless HTTPS origins. They may come from a stored connection, `SHLOOK_DOMAIN`, or the
+four explicit origin variables. Confirm that R2 has no public `r2.dev` URL/custom domain and that
+all D1 migrations are applied.
 
 Run `shlook verify <asset-id> --json` after publication and after material visibility or
 lifecycle changes. It performs two authenticated checks: owner metadata must report `live`,
@@ -41,11 +42,14 @@ Also verify the deployment boundary:
 
 Troubleshooting order:
 
-1. Check all six environment variables from `setup.md` without printing secrets.
+1. Run `shlook auth check --json`. If using an environment profile, check its variables without
+   printing secrets; otherwise check `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/auth.json` and its
+   parent directory permissions.
 2. `shlook auth check --json`
 3. `shlook status --json`
 4. `shlook show <asset-id> --json`
-5. Re-run `verify` and report the exact structured error.
-
-A `shlook setup` result with status `blocked` is expected when Access or host provisioning
-remains manual; it is not successful setup.
+5. For setup failures, inspect the generated
+   `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json` and retained encryption-key
+   path without printing secret contents, then rerun `setup --plan` and report its structured
+   error. A plan that is not ready is not successful setup.
+6. Re-run `verify` and report the exact structured error.

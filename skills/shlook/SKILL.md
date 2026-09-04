@@ -10,12 +10,12 @@ infer artifact content in this skill.
 
 ## Default Flow
 
-1. Require `SHLOOK_DOMAIN` plus the agent's Cloudflare Access service-token credentials. The CLI
-   derives the four standard Shlook origins. Use individual origin environment variables only to
-   override a nonstandard topology.
+1. Use the stored connection created by `shlook setup` or `shlook connect`. Existing environment
+   profiles remain compatible: provide the Access service-token credentials plus `SHLOOK_DOMAIN`,
+   or all four explicit origins for a nonstandard topology.
 2. Run `shlook auth check --json`.
-3. If infrastructure is not ready, stop and read `references/setup.md`. Setup is an
-   operator-owned manual process; do not claim that `shlook setup` provisions Cloudflare.
+3. If infrastructure is not ready, stop and read `references/setup.md`. The standard
+   custom-domain setup is headless; manual deployment remains available for other topologies.
 4. Choose a concise, human-readable asset name and run
    `shlook publish <path> --name "<short name>" [--description "<what it is>"] --json`.
    Publication defaults private.

@@ -62,7 +62,7 @@ jobs:
         id: pack
         run: |
           npm pack --dry-run --json --ignore-scripts > "$RUNNER_TEMP/pack-dry-run.json"
-          npm pack --json --ignore-scripts --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
+          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
           filename="$(node -p 'require(process.argv[1])[0].filename' "$RUNNER_TEMP/pack.json")"
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
 
@@ -71,8 +71,27 @@ jobs:
           tarball="$RUNNER_TEMP/${{ steps.pack.outputs.filename }}"
           mkdir "$RUNNER_TEMP/package-smoke"
           npm install --prefix "$RUNNER_TEMP/package-smoke" --ignore-scripts --no-package-lock "$tarball"
-          "$RUNNER_TEMP/package-smoke/node_modules/.bin/shlook" setup --plan --json > "$RUNNER_TEMP/setup-plan.json"
-          node -e 'const value=require(process.argv[1]); if(!value.ok||value.command!=="setup") process.exit(1)' "$RUNNER_TEMP/setup-plan.json"
+          cli="$RUNNER_TEMP/package-smoke/node_modules/.bin/shlook"
+          package="$RUNNER_TEMP/package-smoke/node_modules/shlook"
+          test -f "$package/dist/cli.js"
+          test -f "$package/dist/cli-setup.js"
+          test -f "$package/dist/cli-setup-runtime.js"
+          test -f "$package/dist/cli-connection.js"
+
+          if "$cli" setup --json > "$RUNNER_TEMP/setup-parser.json"; then
+            exit 1
+          fi
+          node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="setup"||value.error?.code!=="usage_error") process.exit(1)' "$RUNNER_TEMP/setup-parser.json"
+
+          if env -u CLOUDFLARE_API_TOKEN -u SHLOOK_CF_TOKEN "$cli" setup --plan --domain example.com --owner-email owner@example.com --json > "$RUNNER_TEMP/setup-validation.json"; then
+            exit 1
+          fi
+          node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="setup"||value.error?.code!=="bootstrap_token_required") process.exit(1)' "$RUNNER_TEMP/setup-validation.json"
+
+          if printf 'invalid\n' | "$cli" connect --json > "$RUNNER_TEMP/connect-validation.json"; then
+            exit 1
+          fi
+          node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="connect"||value.error?.code!=="invalid_connection_credential") process.exit(1)' "$RUNNER_TEMP/connect-validation.json"
 
       - name: Retain verified tarball
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
