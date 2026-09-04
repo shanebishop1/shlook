@@ -3,14 +3,11 @@ import { expect, test, vi } from "vitest";
 
 import { runCli, type CliDependencies } from "./cli";
 
-const DEFAULT_ORIGIN = "https://owner.example.com";
+const DEFAULT_ORIGIN = "https://shlook.example.com";
 const DEFAULT_ENV = {
   CF_ACCESS_CLIENT_ID: "test-id",
   CF_ACCESS_CLIENT_SECRET: "test-secret",
-  SHLOOK_API_ORIGIN: DEFAULT_ORIGIN,
-  SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
-  SHLOOK_PUBLIC_ORIGIN: "https://public.example.com",
-  SHLOOK_SHARE_ORIGIN: "https://share.example.com",
+  SHLOOK_DOMAIN: "example.com",
 };
 const assetId = "11111111-1111-4111-8111-111111111111";
 const uploadId = "22222222-2222-4222-8222-222222222222";
@@ -93,6 +90,26 @@ test("auth check sends Access headers without leaking credentials", async () => 
   expect(context.stdout.join("") + context.stderr.join("")).not.toContain("super-secret-value");
 });
 
+test("accepts fully explicit legacy origins without a base domain", async () => {
+  const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+    Response.json({ ok: true }),
+  );
+  const context = harness({
+    fetch,
+    env: {
+      CF_ACCESS_CLIENT_ID: "test-id",
+      CF_ACCESS_CLIENT_SECRET: "test-secret",
+      SHLOOK_API_ORIGIN: "https://owner.example.com",
+      SHLOOK_PRIVATE_ORIGIN: "https://private.example.com",
+      SHLOOK_PUBLIC_ORIGIN: "https://public.example.com",
+      SHLOOK_SHARE_ORIGIN: "https://share.example.com",
+    },
+  });
+
+  expect(await runCli(["status", "--json"], context.dependencies)).toBe(0);
+  expect(fetch.mock.calls[0][0]).toBe("https://owner.example.com/health");
+});
+
 test("setup plan is read-only and reports unresolved inspection conflicts", async () => {
   const conflict = {
     code: "remote_state_uninspected",
@@ -116,7 +133,7 @@ test("setup plan is read-only and reports unresolved inspection conflicts", asyn
     bindings: { d1: "DB", r2: "ASSETS", encryptionKey: "SHLOOK_SECRET_ENCRYPTION_KEY" },
     names: "operator_owned",
     origins: {
-      owner: "https://owner.example.com",
+      owner: "https://shlook.example.com",
       private: "https://private.example.com",
       public: "https://public.example.com",
       share: "https://share.example.com",
@@ -334,7 +351,7 @@ test("verify uses GET against the configured private origin", async () => {
   });
 
   expect(await runCli(["verify", assetId, "--json"], context.dependencies)).toBe(0);
-  expect(fetch.mock.calls[0][0]).toBe(`https://owner.example.com/api/assets/${assetId}`);
+  expect(fetch.mock.calls[0][0]).toBe(`${DEFAULT_ORIGIN}/api/assets/${assetId}`);
   expect(fetch.mock.calls[1][0]).toBe(`https://private.test.example/assets/${assetId}/`);
   expect(fetch.mock.calls[1][1]?.method).toBe("GET");
   expect(JSON.parse(context.stdout[0]).data).toEqual({ assetId, verified: true, status: 200 });

@@ -152,17 +152,60 @@ function configuredOrigin(value: string | undefined, name: string): string {
   return url.origin;
 }
 
+function configuredDomain(value: string | undefined): string {
+  if (value === undefined) {
+    throw new CliError(
+      "configuration_required",
+      "SHLOOK_DOMAIN is required when an origin override is not configured",
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(`https://${value}`);
+  } catch {
+    throw new CliError("invalid_configuration", "SHLOOK_DOMAIN must be a bare domain name");
+  }
+  if (url.hostname !== value || url.port !== "" || url.pathname !== "/") {
+    throw new CliError("invalid_configuration", "SHLOOK_DOMAIN must be a bare domain name");
+  }
+  return url.hostname;
+}
+
+function defaultOrigins(domain: string) {
+  return {
+    owner: `https://shlook.${domain}`,
+    private: `https://private.${domain}`,
+    public: `https://public.${domain}`,
+    share: `https://share.${domain}`,
+  };
+}
+
 function origins(dependencies: CliDependencies) {
-  const owner = configuredOrigin(dependencies.env.SHLOOK_API_ORIGIN, "SHLOOK_API_ORIGIN");
-  const privateOrigin = configuredOrigin(
+  const configured = [
+    dependencies.env.SHLOOK_API_ORIGIN,
     dependencies.env.SHLOOK_PRIVATE_ORIGIN,
+    dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+    dependencies.env.SHLOOK_SHARE_ORIGIN,
+  ];
+  const defaults = configured.every((value) => value !== undefined)
+    ? undefined
+    : defaultOrigins(configuredDomain(dependencies.env.SHLOOK_DOMAIN));
+  const owner = configuredOrigin(
+    dependencies.env.SHLOOK_API_ORIGIN ?? defaults?.owner,
+    "SHLOOK_API_ORIGIN",
+  );
+  const privateOrigin = configuredOrigin(
+    dependencies.env.SHLOOK_PRIVATE_ORIGIN ?? defaults?.private,
     "SHLOOK_PRIVATE_ORIGIN",
   );
   const publicOrigin = configuredOrigin(
-    dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+    dependencies.env.SHLOOK_PUBLIC_ORIGIN ?? defaults?.public,
     "SHLOOK_PUBLIC_ORIGIN",
   );
-  const share = configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN");
+  const share = configuredOrigin(
+    dependencies.env.SHLOOK_SHARE_ORIGIN ?? defaults?.share,
+    "SHLOOK_SHARE_ORIGIN",
+  );
   if (new Set([owner, privateOrigin, publicOrigin, share]).size !== 4) {
     throw new CliError("invalid_configuration", "shlook requires four distinct origins");
   }
@@ -214,22 +257,26 @@ async function setupInspection(dependencies: CliDependencies): Promise<SetupInsp
 }
 
 async function setupPlan(dependencies: CliDependencies) {
+  const defaults =
+    dependencies.env.SHLOOK_DOMAIN === undefined
+      ? undefined
+      : defaultOrigins(configuredDomain(dependencies.env.SHLOOK_DOMAIN));
   const configured = {
     owner:
       dependencies.env.SHLOOK_API_ORIGIN === undefined
-        ? undefined
+        ? defaults?.owner
         : configuredOrigin(dependencies.env.SHLOOK_API_ORIGIN, "SHLOOK_API_ORIGIN"),
     private:
       dependencies.env.SHLOOK_PRIVATE_ORIGIN === undefined
-        ? undefined
+        ? defaults?.private
         : configuredOrigin(dependencies.env.SHLOOK_PRIVATE_ORIGIN, "SHLOOK_PRIVATE_ORIGIN"),
     public:
       dependencies.env.SHLOOK_PUBLIC_ORIGIN === undefined
-        ? undefined
+        ? defaults?.public
         : configuredOrigin(dependencies.env.SHLOOK_PUBLIC_ORIGIN, "SHLOOK_PUBLIC_ORIGIN"),
     share:
       dependencies.env.SHLOOK_SHARE_ORIGIN === undefined
-        ? undefined
+        ? defaults?.share
         : configuredOrigin(dependencies.env.SHLOOK_SHARE_ORIGIN, "SHLOOK_SHARE_ORIGIN"),
   };
   const supplied = Object.values(configured).filter((value) => value !== undefined);

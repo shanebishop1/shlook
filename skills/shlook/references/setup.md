@@ -116,19 +116,18 @@ The package does not automate this checklist.
    hostname-scoped self-hosted Access applications for the owner and private hostnames. Do not
    enable the dashboard's Worker-wide **Protect this Worker** control on the shared Worker,
    because that would also challenge the public and share hostnames.
-8. Give the agent the service-token credentials and all four origins:
+8. Give the agent the service-token credentials and the base domain:
 
-   ```bash
-   export CF_ACCESS_CLIENT_ID="<access-service-token-client-id>"
-   export CF_ACCESS_CLIENT_SECRET="<access-service-token-client-secret>"
-   export SHLOOK_API_ORIGIN="https://<owner-host>"
-   export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
-   export SHLOOK_PUBLIC_ORIGIN="https://<public-host>"
-   export SHLOOK_SHARE_ORIGIN="https://<share-host>"
-   ```
+```bash
+export CF_ACCESS_CLIENT_ID="<access-service-token-client-id>"
+export CF_ACCESS_CLIENT_SECRET="<access-service-token-client-secret>"
+export SHLOOK_DOMAIN="<domain>"
+```
 
-   Use each URL's origin only: HTTPS scheme plus hostname, with no path. All four origins must
-   be distinct.
+The CLI derives `shlook`, `private`, `public`, and `share` hostnames from that domain. For a
+nonstandard topology, override any derived address with `SHLOOK_API_ORIGIN`,
+`SHLOOK_PRIVATE_ORIGIN`, `SHLOOK_PUBLIC_ORIGIN`, or `SHLOOK_SHARE_ORIGIN`. Override values must
+be distinct HTTPS origins with no path.
 
 9. Assign the cleanup cron to one deployment only. Deploy, then follow `verification.md`.
 

@@ -60,16 +60,19 @@ The owner Worker also requires a 32-byte base64 encryption key stored as a Cloud
 secret named `SHLOOK_SECRET_ENCRYPTION_KEY`. It encrypts recoverable capability URLs at rest;
 never place it in `vars`, source control, or agent output.
 
-Set these operator-owned values for every CLI or agent environment:
+For the standard custom-domain topology, set the base domain plus the Access service token in
+every CLI or agent environment:
 
 ```bash
-export SHLOOK_API_ORIGIN="https://<owner-host>"
-export SHLOOK_PRIVATE_ORIGIN="https://<private-host>"
-export SHLOOK_PUBLIC_ORIGIN="https://<public-host>"
-export SHLOOK_SHARE_ORIGIN="https://<share-host>"
+export SHLOOK_DOMAIN="<domain>"
 export CF_ACCESS_CLIENT_ID="<agent-service-token-client-id>"
 export CF_ACCESS_CLIENT_SECRET="<agent-service-token-client-secret>"
 ```
+
+The CLI derives `https://shlook.<domain>`, `https://private.<domain>`,
+`https://public.<domain>`, and `https://share.<domain>`. For a nonstandard topology, override
+any derived address with its corresponding `SHLOOK_API_ORIGIN`, `SHLOOK_PRIVATE_ORIGIN`,
+`SHLOOK_PUBLIC_ORIGIN`, or `SHLOOK_SHARE_ORIGIN` environment variable.
 
 Do not rely on package defaults for a self-hosted installation. See
 [`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for the manual
