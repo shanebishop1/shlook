@@ -49,7 +49,9 @@ Troubleshooting order:
 3. `shlook status --json`
 4. `shlook show <asset-id> --json`
 5. For setup failures, inspect the generated
-   `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json` and retained encryption-key
-   path without printing secret contents, then rerun `setup --plan` and report its structured
-   error. A plan that is not ready is not successful setup.
+   `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json`, ownership manifest,
+   pending-service-token path, and retained encryption-key path without printing file contents,
+   then rerun `setup --plan` and report its structured capabilities, blocked actions, or error.
+   A plan that is not ready is not successful setup; a service token within seven days of expiry
+   blocks setup and is not renewed automatically.
 6. Re-run `verify` and report the exact structured error.

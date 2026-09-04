@@ -15,7 +15,8 @@ infer artifact content in this skill.
    or all four explicit origins for a nonstandard topology.
 2. Run `shlook auth check --json`.
 3. If infrastructure is not ready, stop and read `references/setup.md`. The standard
-   custom-domain setup is headless; manual deployment remains available for other topologies.
+   custom-domain setup is headless; use `--adopt-existing` only for intentional adoption of
+   colliding fixed-name resources. Manual deployment remains available for other topologies.
 4. Choose a concise, human-readable asset name and run
    `shlook publish <path> --name "<short name>" [--description "<what it is>"] --json`.
    Publication defaults private.

@@ -72,15 +72,21 @@ shlook setup --apply --domain "example.com" --owner-email "owner@example.com" --
 `CLOUDFLARE_API_TOKEN` is preferred; `SHLOOK_CF_TOKEN` is a compatibility alias. Domain, owner
 email, and optional account ID also fall back to `SHLOOK_DOMAIN`, `SHLOOK_OWNER_EMAIL`, and
 `SHLOOK_ACCOUNT_ID`. The broad provisioning token is used only for setup and is never persisted.
-It must be able to discover account and zone resources and manage D1, R2, Access applications,
-policies and service tokens, Worker deployment/custom domains, and Worker secrets.
+It must be able to verify itself; read memberships and zones; read and write D1, R2, Access
+applications, Access policies, and Access service tokens; inspect Worker services and custom
+domains; and deploy Worker scripts and custom domains. Setup reports unavailable or
+permission-denied capability probes in its plan.
 
 Setup stores generated runtime Access credentials in
 `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/auth.json`, its Wrangler configuration in
 `.../shlook/deployment/wrangler.json`, and the generated encryption key in
-`.../shlook/deployment/secret-encryption-key`. To transfer only the runtime connection, rerun
-apply with `--show-connection-token` and pipe that bearer secret to another installation without
-putting it in argv:
+`.../shlook/deployment/secret-encryption-key`. Owner-only deployment state also includes
+`manifest.json` and, only while recovering an interrupted first apply,
+`pending-service-token.json`; never print their contents. The initial deploy supplies the
+encryption key through a temporary Wrangler `--secrets-file`, so setup never exposes a
+route-bearing Worker without that secret. To transfer only the runtime connection, rerun apply
+with `--show-connection-token` and pipe that bearer secret to another installation without putting
+it in argv:
 
 ```bash
 printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json

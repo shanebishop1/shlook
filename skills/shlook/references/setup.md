@@ -53,20 +53,28 @@ shlook setup --plan --domain "example.com" --owner-email "owner@example.com" --j
 shlook setup --apply --domain "example.com" --owner-email "owner@example.com" --json
 ```
 
+Add `--adopt-existing` to plan and apply only when intentionally taking ownership of colliding
+pre-existing resources with setup's fixed names. Fresh setup is safe without it, and subsequent
+runs use the persisted ownership manifest rather than requiring adoption again.
+
 `CLOUDFLARE_API_TOKEN` is preferred; `SHLOOK_CF_TOKEN` is an alias. If both are set to different
 values, setup stops. `--domain`, `--owner-email`, and optional `--account-id` fall back to
-`SHLOOK_DOMAIN`, `SHLOOK_OWNER_EMAIL`, and `SHLOOK_ACCOUNT_ID`. The provisioning token must permit:
+`SHLOOK_DOMAIN`, `SHLOOK_OWNER_EMAIL`, and `SHLOOK_ACCOUNT_ID`. The provisioning token must permit
+the exact API surfaces setup probes or mutates:
 
-- account membership and zone discovery;
-- D1 and R2 read/write;
-- Access applications, policies, and service tokens read/write;
-- Workers custom-domain inspection and management;
-- Worker script deployment and Worker secret editing.
+- token verification, account membership read, and zone read;
+- account D1 database read/write and R2 bucket read/write;
+- account Access application, application-policy, and service-token read/write;
+- account Workers service read and Worker script deployment; and
+- account Workers custom-domain read/write for the selected zone.
 
-Plan verifies the token and discovers existing resources without mutation. Apply creates or
-reuses exact matches, writes the deployment configuration, applies D1 migrations, deploys the
-Worker and its four custom domains, uploads the encryption secret, verifies owner and private
-Access, and stores the generated runtime connection. The broad provisioning token is passed only
+Plan verifies the token, discovers existing resources without mutation, and reports each missing,
+rate-limited, or unavailable capability probe. Apply creates fresh resources or reuses resources
+owned by its manifest, writes the deployment configuration, applies D1 migrations, and deploys
+the Worker and four custom domains with `SHLOOK_SECRET_ENCRYPTION_KEY` supplied in the same initial
+deployment through a temporary owner-only Wrangler `--secrets-file`. This prevents exposing a
+route-bearing incomplete Worker. Apply then verifies owner and private Access and stores the
+generated runtime connection. The broad provisioning token is passed only
 to the setup operations and a restricted Wrangler child environment; it is never persisted.
 
 Setup writes mode-restricted files below `${XDG_CONFIG_HOME:-$HOME/.config}/shlook`:
@@ -75,12 +83,19 @@ Setup writes mode-restricted files below `${XDG_CONFIG_HOME:-$HOME/.config}/shlo
 auth.json                         generated Access service token and domain
 deployment/wrangler.json         generated deployment IDs and configuration
 deployment/secret-encryption-key generated runtime encryption secret
+deployment/manifest.json         deployment ownership and resource IDs
+deployment/pending-service-token.json interrupted-apply recovery (temporary)
 ```
 
-The generated Access service token is artifact/runtime authentication only; it cannot provision
-Cloudflare. Apply stores it automatically and omits a transferable token from normal output. Use
-`--show-connection-token` only when a second installation needs to connect, treat the result as a
-bearer secret, and deliver it through stdin rather than argv:
+These files and directories are owner-only. The manifest contains no service-token secret. The
+pending file can contain one-time Access credentials and is removed after the connection is
+verified and stored; inspect paths and metadata only, never print secret-bearing contents.
+
+The generated Access service token lasts exactly 90 days (2160 hours) and is artifact/runtime
+authentication only; it cannot provision Cloudflare. Apply stores it automatically and omits a
+transferable token from normal output. Use `--show-connection-token` only when a second
+installation needs to connect, treat the result as a bearer secret, and deliver it through stdin
+rather than argv:
 
 ```bash
 printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json
@@ -91,11 +106,14 @@ profiles remain compatible and take precedence when any profile variable is set:
 `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `SHLOOK_DOMAIN`, or both Access credentials
 and all four explicit origin variables. Partial profiles fail rather than borrowing stored values.
 
-Rerunning apply reuses resources only when their configuration matches exactly, then reapplies
-migrations, redeploys, reuploads the persisted encryption key, verifies, and refreshes local auth.
-Conflicting resources stop the run. Because Cloudflare reveals a service-token secret only when
-created, a first apply that creates it but fails before local connection storage cannot recover
-that secret on rerun; remove/recreate the incomplete service token before retrying.
+Rerunning apply reuses manifest-owned resources only when their identity and configuration match
+exactly, then reapplies migrations, redeploys with the persisted encryption key, verifies, and
+refreshes local auth. An interrupted first apply recovers one-time service-token credentials from
+the owner-only pending file instead of creating a duplicate. Setup never automatically renews or
+duplicates a service token: an expired token is a conflict, and a token expiring within seven
+days causes plan to report a blocked action and apply to stop. Renewal is not part of the setup
+flow and must be handled explicitly. Unowned fixed-name collisions stop unless intentional
+adoption is requested.
 
 ## Manual deployment checklist
 

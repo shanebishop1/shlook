@@ -6,7 +6,7 @@ Use `--json` for agent-consumed calls. Success uses
 
 ```text
 shlook auth check --json
-shlook setup (--plan | --apply) [--domain <domain>] [--owner-email <email>] [--account-id <id>] [--show-connection-token] --json
+shlook setup (--plan | --apply) [--domain <domain>] [--owner-email <email>] [--account-id <id>] [--adopt-existing] [--show-connection-token] --json
 printf '%s\n' '<connection-token>' | shlook connect --json
 shlook status --json
 shlook publish <path> --name <short-name> [--description <text>] [--entrypoint <relative-path>] --json
@@ -24,8 +24,10 @@ Setup requires exactly one of `--plan` and `--apply`, no positional arguments, a
 owner email. Those values fall back to `SHLOOK_DOMAIN` and `SHLOOK_OWNER_EMAIL`; account ID is
 optional and falls back to `SHLOOK_ACCOUNT_ID`. `--show-connection-token` is apply-only. The
 bootstrap credential comes from `CLOUDFLARE_API_TOKEN` (preferred) or `SHLOOK_CF_TOKEN`; if both
-differ, setup fails. Plan performs remote discovery. Apply creates or reuses the standard
-custom-domain resources, deploys and verifies the Worker, and stores the runtime connection.
+differ, setup fails. Plan performs remote discovery and reports missing capability probes.
+`--adopt-existing` permits intentional adoption of colliding pre-existing fixed-name resources;
+fresh setup and manifest-backed reruns do not need it. Apply deploys and verifies the Worker and
+stores the runtime connection.
 
 `connect` is deliberately separate from provisioning. Its token contains only the domain and
 Access service-token credentials, is a bearer secret, and must be supplied through non-TTY stdin,
