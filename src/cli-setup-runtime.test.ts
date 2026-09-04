@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 
 import { expect, test, vi } from "vitest";
 
-import type { ApplySetupResult } from "./cli-setup.ts";
+import type { ApplySetupInput, ApplySetupResult, SetupDeploymentManifest } from "./cli-setup.ts";
 import {
   SetupRuntimeError,
   applySetupRuntime,
@@ -76,6 +76,66 @@ const applied: ApplySetupResult = {
   createdServiceTokenCredentials: {
     clientId: "access-client-id",
     clientSecret: ACCESS_SECRET,
+  },
+};
+
+const deploymentManifest: SetupDeploymentManifest = {
+  version: 1,
+  domain: "example.com",
+  ownerEmail: "owner@example.com",
+  accountId: ACCOUNT_ID,
+  zoneId: ZONE_ID,
+  resources: {
+    d1: { action: "create", name: "shlook", id: "database-id" },
+    r2: { action: "create", name: "shlook-assets", id: "shlook-assets" },
+    access_application_owner: { action: "create", name: "shlook-owner", id: "owner-app-id" },
+    access_application_private: {
+      action: "create",
+      name: "shlook-private",
+      id: "private-app-id",
+    },
+    access_service_token: { action: "create", name: "shlook", id: "service-token-id" },
+    access_email_policy_owner: {
+      action: "create",
+      name: "shlook-owner-email",
+      id: "owner-email-policy",
+    },
+    access_email_policy_private: {
+      action: "create",
+      name: "shlook-owner-email",
+      id: "private-email-policy",
+    },
+    access_service_token_policy_owner: {
+      action: "create",
+      name: "shlook-service-token",
+      id: "owner-token-policy",
+    },
+    access_service_token_policy_private: {
+      action: "create",
+      name: "shlook-service-token",
+      id: "private-token-policy",
+    },
+    worker_service: { action: "create", name: "shlook", id: "shlook" },
+    workers_domain_owner: {
+      action: "create",
+      name: "shlook.example.com",
+      id: "owner-domain-id",
+    },
+    workers_domain_private: {
+      action: "create",
+      name: "private.example.com",
+      id: "private-domain-id",
+    },
+    workers_domain_public: {
+      action: "create",
+      name: "public.example.com",
+      id: "public-domain-id",
+    },
+    workers_domain_share: {
+      action: "create",
+      name: "share.example.com",
+      id: "share-domain-id",
+    },
   },
 };
 
@@ -153,9 +213,15 @@ function fileSystemHarness() {
 function runtimeHarness(overrides: Record<string, unknown> = {}) {
   const fileSystem = fileSystemHarness();
   const events: string[] = [];
+  const deployedSecrets: string[] = [];
   const runCommand = vi.fn(
-    async (_command: string, _args: string[], _options: SetupCommandOptions) => {
+    async (_command: string, args: string[], _options: SetupCommandOptions) => {
       events.push("command");
+      const index = args.indexOf("--secrets-file");
+      if (index !== -1) {
+        const data = fileSystem.files.get(args[index + 1])?.data;
+        if (data !== undefined) deployedSecrets.push(data);
+      }
       return { code: 0 };
     },
   );
@@ -166,9 +232,37 @@ function runtimeHarness(overrides: Record<string, unknown> = {}) {
       ? Response.json({ ok: true, service: "shlook" })
       : Response.json({ error: "not_found" }, { status: 404 });
   });
-  const persistConnection = vi.fn(async () => {
+  let persistedCredential:
+    | { domain: string; accessClientId: string; accessClientSecret: string }
+    | undefined;
+  const persistConnection = vi.fn(async (credential) => {
     events.push("persist");
+    persistedCredential = credential;
     return "/config/shlook/auth.json";
+  });
+  const loadConnection = vi.fn(async () => {
+    if (persistedCredential === undefined) throw new Error("missing");
+    return persistedCredential;
+  });
+  const applyCloudflareSetup = vi.fn(async (rawInput: unknown) => {
+    const applyInput = rawInput as ApplySetupInput;
+    await applyInput.persistence?.saveIntent(applyInput.deploymentManifest ?? deploymentManifest);
+    if (applyInput.existingServiceToken !== undefined) {
+      return {
+        ...applied,
+        resources: {
+          ...applied.resources,
+          accessServiceToken: { ...applied.resources.accessServiceToken, created: false },
+        },
+        createdServiceTokenCredentials: undefined,
+      };
+    }
+    await applyInput.persistence?.saveServiceToken({
+      resourceId: "service-token-id",
+      clientId: "access-client-id",
+      clientSecret: ACCESS_SECRET,
+    });
+    return applied;
   });
   const dependencies = {
     env: {
@@ -184,14 +278,24 @@ function runtimeHarness(overrides: Record<string, unknown> = {}) {
     wranglerPath: "/package/node_modules/wrangler/bin/wrangler.js",
     runCommand,
     persistConnection,
-    applyCloudflareSetup: vi.fn(async (_input: unknown, _dependencies: unknown) => applied),
+    loadConnection,
+    applyCloudflareSetup,
+    reconcileCloudflareSetup: vi.fn(async ({ deploymentManifest: value }) => value),
     fs: fileSystem.fs,
     randomBytes: vi.fn(() => Buffer.alloc(32, 7)),
     randomId: vi.fn(() => "fixed-id"),
     sleep: vi.fn(async () => undefined),
     ...overrides,
   };
-  return { dependencies, events, fileSystem, fetch, persistConnection, runCommand };
+  return {
+    dependencies,
+    events,
+    fileSystem,
+    fetch,
+    persistConnection,
+    runCommand,
+    deployedSecrets,
+  };
 }
 
 test("resolves the setup config beneath a safe XDG or home config directory", () => {
@@ -225,7 +329,7 @@ test("the command environment never inherits unrelated process credentials", () 
   }
 });
 
-test("plan delegates to read-only Cloudflare planning without local or command mutations", async () => {
+test("plan loads ownership state and delegates without local or command mutations", async () => {
   const plan = { ...applied, mode: "plan" as const, ready: true, actions: [], capabilities: {} };
   const planCloudflareSetup = vi.fn(async () => plan);
   const context = runtimeHarness({ planCloudflareSetup });
@@ -242,11 +346,11 @@ test("plan delegates to read-only Cloudflare planning without local or command m
   );
   expect(context.runCommand).not.toHaveBeenCalled();
   expect(context.persistConnection).not.toHaveBeenCalled();
-  expect(context.fileSystem.events).toEqual([]);
+  expect(context.fileSystem.events).toEqual(["open:/config/shlook/deployment/manifest.json"]);
   expect(context.dependencies.randomBytes).not.toHaveBeenCalled();
 });
 
-test("apply writes a strict secret-free config and securely runs migrations, deploy, and secret", async () => {
+test("apply writes a strict secret-free config and deploys routes with an owner-only secrets file", async () => {
   const context = runtimeHarness();
   const result = await applySetupRuntime(
     { domain: "example.com", ownerEmail: "owner@example.com", showConnectionToken: false },
@@ -301,6 +405,13 @@ test("apply writes a strict secret-free config and securely runs migrations, dep
   expect(context.fileSystem.config()).not.toContain(BOOTSTRAP_TOKEN);
   expect(context.fileSystem.config()).not.toContain(ACCESS_SECRET);
   expect(context.fileSystem.config()).not.toContain(ENCRYPTION_KEY);
+  expect(context.fileSystem.files.get("/config/shlook/deployment/manifest.json")).toMatchObject({
+    mode: 0o600,
+    type: "file",
+  });
+  expect(
+    context.fileSystem.files.get("/config/shlook/deployment/manifest.json")?.data,
+  ).not.toContain(ACCESS_SECRET);
 
   const environment = {
     CLOUDFLARE_API_TOKEN: BOOTSTRAP_TOKEN,
@@ -323,30 +434,32 @@ test("apply writes a strict secret-free config and securely runs migrations, dep
     ],
     [
       "/node",
-      ["/package/node_modules/wrangler/bin/wrangler.js", "deploy", "--config", configPath],
-      { cwd: "/package", env: environment },
-    ],
-    [
-      "/node",
       [
         "/package/node_modules/wrangler/bin/wrangler.js",
-        "secret",
-        "put",
-        "SHLOOK_SECRET_ENCRYPTION_KEY",
+        "deploy",
+        "--strict",
         "--config",
         configPath,
+        "--secrets-file",
+        "/config/shlook/deployment/.deploy-secrets.fixed-id.json",
       ],
-      { cwd: "/package", env: environment, input: `${ENCRYPTION_KEY}\n` },
+      { cwd: "/package", env: environment },
     ],
   ]);
   expect(context.runCommand.mock.calls.flatMap((call) => call[1])).not.toContain(ENCRYPTION_KEY);
+  expect(context.deployedSecrets).toEqual([
+    `${JSON.stringify({ SHLOOK_SECRET_ENCRYPTION_KEY: ENCRYPTION_KEY })}\n`,
+  ]);
+  expect(
+    context.fileSystem.files.has("/config/shlook/deployment/.deploy-secrets.fixed-id.json"),
+  ).toBe(false);
   expect(JSON.stringify(result)).not.toContain(BOOTSTRAP_TOKEN);
   expect(JSON.stringify(result)).not.toContain(ACCESS_SECRET);
   expect(JSON.stringify(result)).not.toContain(ENCRYPTION_KEY);
   expect(result).toMatchObject({
     mode: "apply",
     config: { path: configPath },
-    deployment: { migrationsApplied: true, deployed: true, secretStored: true },
+    deployment: { migrationsApplied: true, deployed: true, secretDeployed: true },
     verification: { ownerHealth: true, privateAccess: true },
     connection: { stored: true, path: "/config/shlook/auth.json" },
   });
@@ -368,10 +481,10 @@ test("setup reruns reuse the exact persisted encryption key without generating a
     context.dependencies,
   );
 
-  const secretInputs = context.runCommand.mock.calls
-    .filter((call) => call[1].includes("SHLOOK_SECRET_ENCRYPTION_KEY"))
-    .map((call) => call[2].input);
-  expect(secretInputs).toEqual([`${first.toString("base64")}\n`, `${first.toString("base64")}\n`]);
+  expect(context.deployedSecrets).toEqual([
+    `${JSON.stringify({ SHLOOK_SECRET_ENCRYPTION_KEY: first.toString("base64") })}\n`,
+    `${JSON.stringify({ SHLOOK_SECRET_ENCRYPTION_KEY: first.toString("base64") })}\n`,
+  ]);
   expect(randomBytes).toHaveBeenCalledOnce();
   expect(
     context.fileSystem.files.get("/config/shlook/deployment/secret-encryption-key"),
@@ -384,7 +497,6 @@ test("a failed deployment persists its key for a safe retry instead of rotating"
   const randomBytes = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
   const runCommand = vi
     .fn()
-    .mockResolvedValueOnce({ code: 0 })
     .mockResolvedValueOnce({ code: 0 })
     .mockResolvedValueOnce({ code: 19 })
     .mockResolvedValue({ code: 0 });
@@ -402,14 +514,92 @@ test("a failed deployment persists its key for a safe retry instead of rotating"
     { domain: "example.com", ownerEmail: "owner@example.com" },
     context.dependencies,
   );
-  const secretAttempts = runCommand.mock.calls
-    .filter((call) => call[1].includes("SHLOOK_SECRET_ENCRYPTION_KEY"))
-    .map((call) => call[2].input);
-  expect(secretAttempts).toEqual([
-    `${first.toString("base64")}\n`,
-    `${first.toString("base64")}\n`,
-  ]);
+  expect(context.deployedSecrets).toEqual([]);
   expect(randomBytes).toHaveBeenCalledOnce();
+  expect(
+    context.fileSystem.files.has("/config/shlook/deployment/.deploy-secrets.fixed-id.json"),
+  ).toBe(false);
+});
+
+test("a crash after one-time token creation resumes from owner-only pending credentials", async () => {
+  const initialManifest: SetupDeploymentManifest = {
+    ...deploymentManifest,
+    resources: {
+      ...deploymentManifest.resources,
+      access_service_token: { action: "create", name: "shlook" },
+    },
+  };
+  let attempt = 0;
+  const applyCloudflareSetup = vi.fn(async (rawInput: unknown) => {
+    const applyInput = rawInput as ApplySetupInput;
+    attempt += 1;
+    if (attempt === 1) {
+      await applyInput.persistence!.saveIntent(initialManifest);
+      await applyInput.persistence!.saveServiceToken({
+        resourceId: "service-token-id",
+        clientId: "access-client-id",
+        clientSecret: ACCESS_SECRET,
+      });
+      throw new SetupRuntimeError("setup_command_failed", "simulated post-token failure");
+    }
+    expect(applyInput.existingServiceToken).toEqual({
+      clientId: "access-client-id",
+      clientSecret: ACCESS_SECRET,
+    });
+    expect(applyInput.deploymentManifest?.resources.access_service_token.id).toBe(
+      "service-token-id",
+    );
+    await applyInput.persistence!.saveIntent(applyInput.deploymentManifest!);
+    return {
+      ...applied,
+      resources: {
+        ...applied.resources,
+        accessServiceToken: { ...applied.resources.accessServiceToken, created: false },
+      },
+      createdServiceTokenCredentials: undefined,
+    };
+  });
+  const context = runtimeHarness({ applyCloudflareSetup });
+
+  const first = applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  await expect(first).rejects.toMatchObject({ code: "setup_command_failed" });
+  const pendingPath = "/config/shlook/deployment/pending-service-token.json";
+  const manifestPath = "/config/shlook/deployment/manifest.json";
+  expect(context.fileSystem.files.get(pendingPath)).toMatchObject({ mode: 0o600, type: "file" });
+  expect(context.fileSystem.files.get(pendingPath)?.data).toContain(ACCESS_SECRET);
+  expect(context.fileSystem.files.get(manifestPath)?.data).not.toContain(ACCESS_SECRET);
+  expect(context.persistConnection).not.toHaveBeenCalled();
+
+  const result = await applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  expect(result.connection.stored).toBe(true);
+  expect(context.fileSystem.files.has(pendingPath)).toBe(false);
+  expect(context.fileSystem.files.get(manifestPath)?.data).not.toContain(ACCESS_SECRET);
+  expect(JSON.stringify(result)).not.toContain(ACCESS_SECRET);
+});
+
+test("never runs a route-bearing deploy when the temporary secrets file cannot be created", async () => {
+  const context = runtimeHarness();
+  const originalWrite = context.fileSystem.fs.writeFile;
+  context.fileSystem.fs.writeFile = vi.fn(async (path, data, options) => {
+    if (path.includes(".deploy-secrets.")) throw new Error(`${ENCRYPTION_KEY}: disk full`);
+    return originalWrite(path, data, options);
+  });
+
+  const operation = applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  await expect(operation).rejects.toMatchObject({ code: "setup_secret_storage_failed" });
+  expect(context.runCommand).toHaveBeenCalledTimes(1);
+  expect(context.runCommand.mock.calls[0][1]).toContain("migrations");
+  expect(context.runCommand.mock.calls.flatMap((call) => call[1])).not.toContain("deploy");
+  expect(String(await operation.catch((error) => error))).not.toContain(ENCRYPTION_KEY);
 });
 
 test("deployment secret loading rejects invalid, unsafe, and permissive files without rotation", async () => {
@@ -438,8 +628,26 @@ test("deployment secret loading rejects invalid, unsafe, and permissive files wi
       blockedApply.dependencies,
     ),
   ).rejects.toMatchObject({ code: "setup_secret_storage_failed" });
-  expect(blockedApply.dependencies.applyCloudflareSetup).not.toHaveBeenCalled();
+  expect(blockedApply.dependencies.applyCloudflareSetup).toHaveBeenCalledOnce();
   expect(blockedApply.runCommand).not.toHaveBeenCalled();
+});
+
+test("rejects permissive or malformed ownership manifests before Cloudflare mutation", async () => {
+  for (const [data, mode] of [
+    [`${JSON.stringify(deploymentManifest)}\n`, 0o644],
+    ["{malformed", 0o600],
+  ] as const) {
+    const context = runtimeHarness();
+    context.fileSystem.putFile("/config/shlook/deployment/manifest.json", data, mode);
+    await expect(
+      applySetupRuntime(
+        { domain: "example.com", ownerEmail: "owner@example.com" },
+        context.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "setup_manifest_storage_failed" });
+    expect(context.dependencies.applyCloudflareSetup).not.toHaveBeenCalled();
+    expect(context.runCommand).not.toHaveBeenCalled();
+  }
 });
 
 test("a rerun with missing deployment-secret state fails closed instead of rotating", async () => {
@@ -461,6 +669,10 @@ test("a rerun with missing deployment-secret state fails closed instead of rotat
       accessClientSecret: "existing-secret",
     })),
   });
+  storedConnection.fileSystem.putFile(
+    "/config/shlook/deployment/manifest.json",
+    `${JSON.stringify(deploymentManifest, null, 2)}\n`,
+  );
   await expect(
     applySetupRuntime(
       { domain: "example.com", ownerEmail: "owner@example.com" },
@@ -468,7 +680,7 @@ test("a rerun with missing deployment-secret state fails closed instead of rotat
     ),
   ).rejects.toMatchObject({ code: "setup_secret_storage_failed" });
   expect(storedConnection.dependencies.randomBytes).not.toHaveBeenCalled();
-  expect(storedConnection.dependencies.applyCloudflareSetup).not.toHaveBeenCalled();
+  expect(storedConnection.dependencies.applyCloudflareSetup).toHaveBeenCalledOnce();
 });
 
 test("apply verifies both protected origins and persists credentials only after full verification", async () => {
@@ -500,14 +712,18 @@ test("apply verifies both protected origins and persists credentials only after 
 });
 
 test("apply passes matching stored credentials to Cloudflare and emits a token only by request", async () => {
-  const applyCloudflareSetup = vi.fn(async (_input: unknown, _dependencies: unknown) => ({
-    ...applied,
-    resources: {
-      ...applied.resources,
-      accessServiceToken: { ...applied.resources.accessServiceToken, created: false },
-    },
-    createdServiceTokenCredentials: undefined,
-  }));
+  const applyCloudflareSetup = vi.fn(async (rawInput: unknown) => {
+    const applyInput = rawInput as ApplySetupInput;
+    await applyInput.persistence!.saveIntent(deploymentManifest);
+    return {
+      ...applied,
+      resources: {
+        ...applied.resources,
+        accessServiceToken: { ...applied.resources.accessServiceToken, created: false },
+      },
+      createdServiceTokenCredentials: undefined,
+    };
+  });
   const context = runtimeHarness({
     applyCloudflareSetup,
     loadConnection: vi.fn(async () => ({
@@ -525,7 +741,7 @@ test("apply passes matching stored credentials to Cloudflare and emits a token o
     context.dependencies,
   );
 
-  expect(applyCloudflareSetup.mock.calls[0][0]).toEqual({
+  expect(applyCloudflareSetup.mock.calls[0][0]).toMatchObject({
     domain: "example.com",
     ownerEmail: "owner@example.com",
     existingServiceToken: {
@@ -549,6 +765,9 @@ test("partial command or verification failure never persists a connection", asyn
   ).rejects.toMatchObject({ code: "setup_command_failed" });
   expect(commandFailure.persistConnection).not.toHaveBeenCalled();
   expect(commandFailure.fetch).not.toHaveBeenCalled();
+  expect(
+    commandFailure.fileSystem.files.has("/config/shlook/deployment/pending-service-token.json"),
+  ).toBe(true);
 
   const verificationFailure = runtimeHarness({
     fetch: vi.fn(async () => new Response(null, { status: 403 })),
@@ -566,6 +785,58 @@ test("partial command or verification failure never persists a connection", asyn
   expect(error).toMatchObject({ code: "setup_verification_failed" });
   expect(verificationFailure.dependencies.fetch).toHaveBeenCalledTimes(12);
   expect(verificationFailure.persistConnection).not.toHaveBeenCalled();
+  expect(
+    verificationFailure.fileSystem.files.has(
+      "/config/shlook/deployment/pending-service-token.json",
+    ),
+  ).toBe(true);
+
+  verificationFailure.dependencies.fetch.mockImplementation(async (url: string | URL | Request) =>
+    String(url).endsWith("/health")
+      ? Response.json({ ok: true })
+      : Response.json({ error: "not_found" }, { status: 404 }),
+  );
+  await applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    verificationFailure.dependencies,
+  );
+  expect(
+    verificationFailure.fileSystem.files.has(
+      "/config/shlook/deployment/pending-service-token.json",
+    ),
+  ).toBe(false);
+});
+
+test("a persistence failure retains pending credentials and a rerun promotes them", async () => {
+  let saved: { domain: string; accessClientId: string; accessClientSecret: string } | undefined;
+  const persistConnection = vi
+    .fn()
+    .mockRejectedValueOnce(new Error(`${ACCESS_SECRET}: disk failure`))
+    .mockImplementation(async (credential) => {
+      saved = credential;
+      return "/config/shlook/auth.json";
+    });
+  const loadConnection = vi.fn(async () => {
+    if (saved === undefined) throw new Error("missing");
+    return saved;
+  });
+  const context = runtimeHarness({ persistConnection, loadConnection });
+  const first = applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  const error = await first.catch((cause) => cause);
+  expect(error).toMatchObject({ code: "connection_persistence_failed" });
+  expect(String(error)).not.toContain(ACCESS_SECRET);
+  const pendingPath = "/config/shlook/deployment/pending-service-token.json";
+  expect(context.fileSystem.files.has(pendingPath)).toBe(true);
+
+  await applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  expect(context.fileSystem.files.has(pendingPath)).toBe(false);
+  expect(persistConnection).toHaveBeenCalledTimes(2);
 });
 
 test("setup failures are stable and never reflect command or encryption secrets", async () => {
@@ -589,6 +860,7 @@ test("setup failures are stable and never reflect command or encryption secrets"
   });
   expect(String(commandError)).not.toContain(BOOTSTRAP_TOKEN);
   expect(String(commandError)).not.toContain(ACCESS_SECRET);
+  expect(String(commandError)).not.toContain(ENCRYPTION_KEY);
 
   const randomFailure = runtimeHarness({ randomBytes: vi.fn(() => new Uint8Array(31)) });
   await expect(
@@ -607,7 +879,7 @@ test("setup failures are stable and never reflect command or encryption secrets"
       { domain: "example.com", ownerEmail: "owner@example.com" },
       pathFailure.dependencies,
     ),
-  ).rejects.toMatchObject({ code: "setup_secret_storage_failed" });
+  ).rejects.toMatchObject({ code: "setup_manifest_storage_failed" });
   expect(pathFailure.runCommand).not.toHaveBeenCalled();
   expect(pathFailure.persistConnection).not.toHaveBeenCalled();
 });
@@ -634,7 +906,7 @@ test("a connection for another domain is not supplied as an existing service tok
       context.dependencies,
     ),
   ).rejects.toMatchObject({ code: "service_token_secret_unavailable" });
-  expect(applyCloudflareSetup.mock.calls[0][0]).toEqual({
+  expect(applyCloudflareSetup.mock.calls[0][0]).toMatchObject({
     domain: "example.com",
     ownerEmail: "owner@example.com",
   });

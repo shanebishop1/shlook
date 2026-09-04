@@ -57,6 +57,7 @@ interface CliOptions {
   ownerEmail?: string;
   accountId?: string;
   showConnectionToken?: boolean;
+  adoptExisting?: boolean;
   entrypoint?: string;
   name?: string;
   description?: string;
@@ -151,6 +152,7 @@ function parse(argv: string[]): { positionals: string[]; options: CliOptions } {
         "owner-email": { type: "string" },
         "account-id": { type: "string" },
         "show-connection-token": { type: "boolean" },
+        "adopt-existing": { type: "boolean" },
         entrypoint: { type: "string" },
         name: { type: "string" },
         description: { type: "string" },
@@ -167,6 +169,7 @@ function parse(argv: string[]): { positionals: string[]; options: CliOptions } {
         ownerEmail: values["owner-email"],
         accountId: values["account-id"],
         showConnectionToken: values["show-connection-token"],
+        adoptExisting: values["adopt-existing"],
         entrypoint: values.entrypoint,
         name: values.name,
         description: values.description,
@@ -447,6 +450,7 @@ function setupInput(options: CliOptions, dependencies: CliDependencies): SetupIn
     domain,
     ownerEmail,
     ...(accountId === undefined ? {} : { accountId }),
+    ...(options.adoptExisting === true ? { adoptExisting: true } : {}),
   };
 }
 

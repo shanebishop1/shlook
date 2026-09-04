@@ -7,6 +7,8 @@ import {
   planSetup,
   type ApplySetupInput,
   type CloudflareSetupDependencies,
+  type SetupDeploymentManifest,
+  type SetupPersistence,
 } from "./cli-setup.ts";
 
 const ACCOUNT_ID = "a".repeat(32);
@@ -82,6 +84,7 @@ function baseResponse(url: URL): Response {
   if (url.pathname.endsWith("/r2/buckets")) return envelope({ buckets: [] });
   if (url.pathname.endsWith("/access/apps")) return page([]);
   if (url.pathname.endsWith("/access/service_tokens")) return page([]);
+  if (url.pathname.endsWith("/workers/services")) return page([]);
   if (url.pathname.endsWith("/workers/domains")) return envelope([]);
   throw new Error(`unhandled test request: ${url.pathname}`);
 }
@@ -107,6 +110,15 @@ function harness(
 }
 
 const input: ApplySetupInput = { domain: "example.com", ownerEmail: "owner@example.com" };
+
+function persistence(overrides: Partial<SetupPersistence> = {}): SetupPersistence {
+  return {
+    saveIntent: vi.fn(async () => undefined),
+    saveResource: vi.fn(async () => undefined),
+    saveServiceToken: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
 
 async function capturedError(operation: Promise<unknown>): Promise<CloudflareSetupError> {
   try {
@@ -197,6 +209,7 @@ test("plan verifies identity, probes every read surface, and never mutates", asy
       r2: { status: "available" },
       accessApplications: { status: "available" },
       accessServiceTokens: { status: "available" },
+      workersServices: { status: "available" },
       workersDomains: { status: "available" },
     },
   });
@@ -227,6 +240,7 @@ test("plan verifies identity, probes every read surface, and never mutates", asy
       `/client/v4/accounts/${ACCOUNT_ID}/r2/buckets`,
       `/client/v4/accounts/${ACCOUNT_ID}/access/apps`,
       `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens`,
+      `/client/v4/accounts/${ACCOUNT_ID}/workers/services`,
       `/client/v4/accounts/${ACCOUNT_ID}/workers/domains`,
     ]),
   );
@@ -344,12 +358,24 @@ test("paginates Workers domains using full-page and short-page semantics", async
               zone_id: ZONE_ID,
             })),
           )
-        : envelope([{ id: "owner-domain-id", hostname: "shlook.example.com", zone_id: ZONE_ID }]);
+        : envelope([
+            {
+              id: "owner-domain-id",
+              hostname: "shlook.example.com",
+              zone_id: ZONE_ID,
+              service: "shlook",
+            },
+          ]);
     }
     return baseResponse(url);
   });
 
-  await planSetup(input, context.dependencies);
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  expect(plan.deploymentManifest.resources.workers_domain_owner).toEqual({
+    action: "adopt",
+    name: "shlook.example.com",
+    id: "owner-domain-id",
+  });
 
   const requests = context.requests.filter((request) =>
     request.url.pathname.endsWith("/workers/domains"),
@@ -429,9 +455,23 @@ function existingStateResponse(url: URL): Response {
 
 test("reuses exact existing resources and policies without mutation", async () => {
   const context = harness(({ url }) => existingStateResponse(url));
+  const refusal = await capturedError(planSetup(input, context.dependencies));
+  expect(refusal).toMatchObject({ code: "setup_resource_collision" });
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+
+  const adoptedPlan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  expect(adoptedPlan.deploymentManifest.resources.d1).toMatchObject({
+    action: "adopt",
+    id: "database-id",
+  });
+  expect(adoptedPlan.actions).toContainEqual(
+    expect.objectContaining({ resource: "d1", operation: "adopt", id: "database-id" }),
+  );
   const result = await applySetup(
     {
       ...input,
+      deploymentManifest: adoptedPlan.deploymentManifest,
+      persistence: persistence(),
       existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
     },
     context.dependencies,
@@ -451,6 +491,85 @@ test("reuses exact existing resources and policies without mutation", async () =
   const serialized = JSON.stringify(result);
   expect(serialized).not.toContain(TOKEN);
   expect(serialized).not.toContain("known-secret");
+});
+
+test("fails closed when a deployment manifest target or resource ID does not match", async () => {
+  const context = harness(({ url }) => existingStateResponse(url));
+  const adopted = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  const wrongAccount: SetupDeploymentManifest = {
+    ...adopted.deploymentManifest,
+    accountId: OTHER_ACCOUNT_ID,
+  };
+  expect(
+    (
+      await capturedError(
+        planSetup({ ...input, deploymentManifest: wrongAccount }, context.dependencies),
+      )
+    ).code,
+  ).toBe("setup_manifest_mismatch");
+
+  const wrongD1: SetupDeploymentManifest = {
+    ...adopted.deploymentManifest,
+    resources: {
+      ...adopted.deploymentManifest.resources,
+      d1: { ...adopted.deploymentManifest.resources.d1, id: "wrong-database-id" },
+    },
+  };
+  expect(
+    (
+      await capturedError(
+        planSetup({ ...input, deploymentManifest: wrongD1 }, context.dependencies),
+      )
+    ).code,
+  ).toBe("setup_manifest_mismatch");
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+test("rejects Worker service and custom-domain ownership conflicts before mutation", async () => {
+  for (const conflict of ["worker", "domain"] as const) {
+    const context = harness(({ url }) => {
+      if (conflict === "worker" && url.pathname.endsWith("/workers/services")) {
+        return page([{ id: "shlook", default_environment: { environment: "production" } }]);
+      }
+      if (conflict === "domain" && url.pathname.endsWith("/workers/domains")) {
+        return envelope([
+          {
+            id: "foreign-domain-id",
+            hostname: "shlook.example.com",
+            zone_id: ZONE_ID,
+            service: "unrelated-worker",
+          },
+        ]);
+      }
+      return baseResponse(url);
+    });
+
+    const error = await capturedError(planSetup(input, context.dependencies));
+    expect(error.code).toBe(
+      conflict === "worker" ? "setup_resource_collision" : "setup_resource_conflict",
+    );
+    expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+  }
+});
+
+test("adopts the exact named Worker only with the explicit dangerous flag", async () => {
+  const context = harness(({ url }) =>
+    url.pathname.endsWith("/workers/services")
+      ? page([{ id: "shlook", default_environment: { environment: "production" } }])
+      : baseResponse(url),
+  );
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  expect(plan.actions).toContainEqual({
+    resource: "worker_service",
+    operation: "adopt",
+    name: "shlook",
+    id: "shlook",
+  });
+  expect(plan.deploymentManifest.resources.worker_service).toEqual({
+    action: "adopt",
+    name: "shlook",
+    id: "shlook",
+  });
 });
 
 test.each([
@@ -539,7 +658,7 @@ test("rejects expired service tokens and blocks near-expiry tokens without creat
   expect(expired.requests.every((request) => request.method === "GET")).toBe(true);
 
   const nearExpiry = tokenResponse(new Date(Date.now() + 60 * 60 * 1000).toISOString());
-  const plan = await planSetup(input, nearExpiry.dependencies);
+  const plan = await planSetup({ ...input, adoptExisting: true }, nearExpiry.dependencies);
   expect(plan.ready).toBe(false);
   expect(plan.actions).toContainEqual({
     resource: "access_service_token",
@@ -553,6 +672,8 @@ test("rejects expired service tokens and blocks near-expiry tokens without creat
     applySetup(
       {
         ...input,
+        deploymentManifest: plan.deploymentManifest,
+        persistence: persistence(),
         existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
       },
       nearExpiry.dependencies,
@@ -565,9 +686,15 @@ test("rejects expired service tokens and blocks near-expiry tokens without creat
   ).toHaveLength(2);
 });
 
-test("refuses an existing named service token without a recoverable secret before mutation", async () => {
+test("refuses an adopted service token without a recoverable secret before mutation", async () => {
   const context = harness(({ url }) => existingStateResponse(url));
-  const error = await capturedError(applySetup(input, context.dependencies));
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  const error = await capturedError(
+    applySetup(
+      { ...input, deploymentManifest: plan.deploymentManifest, persistence: persistence() },
+      context.dependencies,
+    ),
+  );
 
   expect(error).toMatchObject({
     code: "service_token_secret_unavailable",
@@ -577,6 +704,8 @@ test("refuses an existing named service token without a recoverable secret befor
 });
 
 test("creates resources in order and applies exact email and service-token policies", async () => {
+  let mutationCountAtIntent = -1;
+  let mutationCountAtSecretSink = -1;
   const context = harness(({ url, method, body }) => {
     if (method === "GET") return baseResponse(url);
     if (url.pathname.endsWith("/d1/database")) {
@@ -612,7 +741,25 @@ test("creates resources in order and applies exact email and service-token polic
     }
     throw new Error(`unhandled mutation ${method} ${url.pathname}`);
   });
-  const result = await applySetup(input, context.dependencies);
+  const statePersistence = persistence({
+    saveIntent: vi.fn(async () => {
+      mutationCountAtIntent = context.requests.filter((request) => request.method !== "GET").length;
+    }),
+    saveServiceToken: vi.fn(async (pending) => {
+      expect(pending).toMatchObject({
+        resourceId: "token-id",
+        clientId: "new-client-id",
+        clientSecret: "new-client-secret",
+      });
+      mutationCountAtSecretSink = context.requests.filter(
+        (request) => request.method !== "GET",
+      ).length;
+    }),
+  });
+  const result = await applySetup(
+    { ...input, persistence: statePersistence },
+    context.dependencies,
+  );
   const mutations = context.requests.filter((request) => request.method !== "GET");
 
   expect(mutations.map((request) => request.url.pathname)).toEqual([
@@ -627,6 +774,9 @@ test("creates resources in order and applies exact email and service-token polic
     `/client/v4/accounts/${ACCOUNT_ID}/access/apps/shlook-private-id/policies`,
   ]);
   expect(mutations.map((request) => request.method)).toEqual(Array(9).fill("POST"));
+  expect(mutationCountAtIntent).toBe(0);
+  expect(mutationCountAtSecretSink).toBe(5);
+  expect(statePersistence.saveIntent).toHaveBeenCalledOnce();
   expect(mutations[2].body).toEqual({
     name: "shlook-owner",
     domain: "shlook.example.com",
@@ -657,6 +807,32 @@ test("creates resources in order and applies exact email and service-token polic
   });
   expect(result.resources.accessPolicies.owner.email.id).toBeTypeOf("string");
   expect(JSON.stringify(result)).not.toContain(TOKEN);
+});
+
+test("refuses all Cloudflare mutations unless the deployment intention can be persisted first", async () => {
+  const missing = harness();
+  const missingError = await capturedError(applySetup(input, missing.dependencies));
+  expect(missingError.code).toBe("setup_state_persistence_required");
+  expect(missing.requests.every((request) => request.method === "GET")).toBe(true);
+
+  const rejected = harness();
+  const secretValue = "pending-secret-must-not-leak";
+  const rejectedError = await capturedError(
+    applySetup(
+      {
+        ...input,
+        persistence: persistence({
+          saveIntent: vi.fn(async () => {
+            throw new Error(secretValue);
+          }),
+        }),
+      },
+      rejected.dependencies,
+    ),
+  );
+  expect(rejectedError).toMatchObject({ code: "setup_state_persistence_failed" });
+  expect(String(rejectedError)).not.toContain(secretValue);
+  expect(rejected.requests.every((request) => request.method === "GET")).toBe(true);
 });
 
 test("rejects redirect responses and never forwards authorization", async () => {

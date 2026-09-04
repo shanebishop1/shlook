@@ -36,9 +36,18 @@ function harness(overrides: Partial<CliDependencies> = {}) {
       const options: Record<string, boolean | string> = {};
       for (let index = 0; index < argv.length; index += 1) {
         const value = argv[index];
-        if (["--json", "--plan", "--apply", "--show-connection-token"].includes(value))
-          options[value === "--show-connection-token" ? "showConnectionToken" : value.slice(2)] =
-            true;
+        if (
+          ["--json", "--plan", "--apply", "--show-connection-token", "--adopt-existing"].includes(
+            value,
+          )
+        )
+          options[
+            value === "--show-connection-token"
+              ? "showConnectionToken"
+              : value === "--adopt-existing"
+                ? "adoptExisting"
+                : value.slice(2)
+          ] = true;
         else if (
           [
             "--entrypoint",
@@ -326,6 +335,28 @@ test("setup parser passes flags over environment fallbacks to the Cloudflare pla
     domain: "environment.example.com",
     ownerEmail: "environment@example.com",
     accountId: "e".repeat(32),
+  });
+});
+
+test("setup forwards the explicit dangerous adoption flag and never enables it implicitly", async () => {
+  const planSetup = vi.fn(async (value) => ({ mode: "plan", value }));
+  const environment = {
+    CLOUDFLARE_API_TOKEN: "bootstrap-secret",
+    SHLOOK_DOMAIN: "example.com",
+    SHLOOK_OWNER_EMAIL: "owner@example.com",
+  };
+  const normal = harness({ env: environment, planSetup });
+  expect(await runCli(["setup", "--plan", "--json"], normal.dependencies)).toBe(0);
+  expect(planSetup.mock.calls[0][0]).not.toHaveProperty("adoptExisting");
+
+  const dangerous = harness({ env: environment, planSetup });
+  expect(
+    await runCli(["setup", "--plan", "--adopt-existing", "--json"], dangerous.dependencies),
+  ).toBe(0);
+  expect(planSetup).toHaveBeenLastCalledWith({
+    domain: "example.com",
+    ownerEmail: "owner@example.com",
+    adoptExisting: true,
   });
 });
 

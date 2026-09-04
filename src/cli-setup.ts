@@ -24,7 +24,50 @@ export const CLOUDFLARE_SETUP_NAMES = {
 
 export type SetupSurface = "owner" | "private";
 export type CapabilityStatus = "available" | "missing_permission" | "rate_limited" | "unavailable";
-export type SetupOperation = "create" | "reuse" | "controller" | "blocked";
+export type SetupOperation = "create" | "adopt" | "reuse" | "controller" | "blocked";
+export type SetupIntentAction = "create" | "adopt";
+export type SetupResourceKey =
+  | "d1"
+  | "r2"
+  | "access_application_owner"
+  | "access_application_private"
+  | "access_service_token"
+  | "access_email_policy_owner"
+  | "access_email_policy_private"
+  | "access_service_token_policy_owner"
+  | "access_service_token_policy_private"
+  | "worker_service"
+  | "workers_domain_owner"
+  | "workers_domain_private"
+  | "workers_domain_public"
+  | "workers_domain_share";
+
+export interface SetupResourceIntent {
+  action: SetupIntentAction;
+  name: string;
+  id?: string;
+}
+
+export interface SetupDeploymentManifest {
+  version: 1;
+  domain: string;
+  ownerEmail: string;
+  accountId: string;
+  zoneId: string;
+  resources: Record<SetupResourceKey, SetupResourceIntent>;
+}
+
+export interface PendingServiceToken {
+  resourceId: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface SetupPersistence {
+  saveIntent(manifest: SetupDeploymentManifest): Promise<void>;
+  saveResource(resource: SetupResourceKey, id: string): Promise<void>;
+  saveServiceToken(token: PendingServiceToken): Promise<void>;
+}
 
 export interface CloudflareSetupDependencies {
   env: Record<string, string | undefined>;
@@ -35,6 +78,9 @@ export interface SetupInput {
   domain: string;
   ownerEmail: string;
   accountId?: string;
+  /** Explicitly permits taking ownership of fixed-name resources. This is dangerous. */
+  adoptExisting?: boolean;
+  deploymentManifest?: SetupDeploymentManifest;
 }
 
 export interface ExistingServiceTokenCredentials {
@@ -44,6 +90,7 @@ export interface ExistingServiceTokenCredentials {
 
 export interface ApplySetupInput extends SetupInput {
   existingServiceToken?: ExistingServiceTokenCredentials;
+  persistence?: SetupPersistence;
 }
 
 export interface SetupCapability {
@@ -60,6 +107,7 @@ export interface SetupCapabilities {
   accessApplications: SetupCapability;
   accessPolicies: SetupCapability;
   accessServiceTokens: SetupCapability;
+  workersServices: SetupCapability;
   workersDomains: SetupCapability;
 }
 
@@ -88,6 +136,7 @@ export interface SetupAction {
     | "access_email_policy"
     | "access_service_token"
     | "access_service_token_policy"
+    | "worker_service"
     | "workers_domains";
   operation: SetupOperation;
   name: string;
@@ -106,6 +155,7 @@ export interface SetupPlan {
   origins: SetupOrigins;
   capabilities: SetupCapabilities;
   actions: SetupAction[];
+  deploymentManifest: SetupDeploymentManifest;
 }
 
 export interface AppliedResource {
@@ -174,6 +224,10 @@ export type CloudflareSetupErrorCode =
   | "zone_not_found"
   | "zone_ambiguous"
   | "setup_resource_conflict"
+  | "setup_resource_collision"
+  | "setup_manifest_mismatch"
+  | "setup_state_persistence_required"
+  | "setup_state_persistence_failed"
   | "setup_capabilities_unavailable"
   | "service_token_secret_unavailable"
   | "service_token_credentials_conflict";
@@ -253,6 +307,11 @@ interface WorkersDomainRecord {
   id?: unknown;
   hostname?: unknown;
   zone_id?: unknown;
+  service?: unknown;
+}
+
+interface WorkersServiceRecord {
+  id?: unknown;
 }
 
 interface ExistingState {
@@ -276,7 +335,8 @@ interface ExistingState {
     expiresAt: string;
     nearExpiry: boolean;
   };
-  workersDomains: Array<{ id: string; hostname: string }>;
+  workerService?: { id: string; name: string };
+  workersDomains: Array<{ id: string; hostname: string; service: string }>;
 }
 
 interface Inspection {
@@ -323,6 +383,89 @@ function resourceConflict(): never {
     "setup_resource_conflict",
     "an existing Cloudflare resource conflicts with the required shlook setup",
   );
+}
+
+function resourceCollision(): never {
+  throw new CloudflareSetupError(
+    "setup_resource_collision",
+    "an existing fixed-name Cloudflare resource is not owned by this shlook deployment; rerun with --adopt-existing only if intentional",
+  );
+}
+
+function manifestMismatch(): never {
+  throw new CloudflareSetupError(
+    "setup_manifest_mismatch",
+    "the persisted shlook deployment manifest does not match Cloudflare or the requested target",
+  );
+}
+
+function resourceKey(
+  kind:
+    | "access_application"
+    | "access_email_policy"
+    | "access_service_token_policy"
+    | "workers_domain",
+  surface: "owner" | "private" | "public" | "share",
+): SetupResourceKey {
+  return `${kind}_${surface}` as SetupResourceKey;
+}
+
+function expectedResource(
+  input: SetupInput,
+  key: SetupResourceKey,
+  name: string,
+  existing: { id: string } | undefined,
+  discoverCreatedWorkersResources = false,
+): void {
+  const expected = input.deploymentManifest?.resources[key];
+  if (input.deploymentManifest === undefined) {
+    if (existing !== undefined && input.adoptExisting !== true) resourceCollision();
+    return;
+  }
+  if (expected === undefined) manifestMismatch();
+  if (expected.name !== name) manifestMismatch();
+  if (existing === undefined) {
+    if (
+      expected.action !== "create" ||
+      (expected.id !== undefined &&
+        !(
+          (key === "worker_service" && expected.id === "shlook") ||
+          (key === "r2" && expected.id === CLOUDFLARE_SETUP_NAMES.r2)
+        ))
+    )
+      manifestMismatch();
+    return;
+  }
+  if (expected.id === undefined) {
+    if (
+      !discoverCreatedWorkersResources ||
+      expected.action !== "create" ||
+      !key.startsWith("workers_domain_")
+    )
+      manifestMismatch();
+    return;
+  }
+  if (expected.id !== existing.id) manifestMismatch();
+}
+
+function intent(
+  input: SetupInput,
+  name: string,
+  existing?: { id: string },
+  deterministicCreateId?: string,
+): SetupResourceIntent {
+  if (input.deploymentManifest !== undefined) {
+    throw new Error("existing manifest intents must be reused");
+  }
+  return {
+    action: existing === undefined ? "create" : "adopt",
+    name,
+    ...(existing === undefined
+      ? deterministicCreateId === undefined
+        ? {}
+        : { id: deterministicCreateId }
+      : { id: existing.id }),
+  };
 }
 
 function normalizeInput(input: SetupInput): NormalizedSetupInput {
@@ -979,6 +1122,16 @@ async function inspectServiceToken(client: CloudflareApiClient, accountId: strin
   };
 }
 
+async function inspectWorkerService(client: CloudflareApiClient, accountId: string) {
+  const items = await pagedArray(client, `/accounts/${accountId}/workers/services`, {});
+  const selected = exactOne(
+    items.filter(
+      (value): value is WorkersServiceRecord => isRecord(value) && value.id === "shlook",
+    ),
+  );
+  return selected === undefined ? undefined : { id: "shlook", name: "shlook" };
+}
+
 async function inspectWorkersDomains(
   client: CloudflareApiClient,
   accountId: string,
@@ -998,7 +1151,14 @@ async function inspectWorkersDomains(
         nonemptyString(value.hostname) &&
         expected.has(value.hostname),
     )
-    .map((value) => ({ id: value.id as string, hostname: value.hostname as string }));
+    .map((value) => {
+      if (!nonemptyString(value.service) || value.service !== "shlook") resourceConflict();
+      return {
+        id: value.id as string,
+        hostname: value.hostname as string,
+        service: value.service,
+      };
+    });
 }
 
 function emptyRules(value: unknown): boolean {
@@ -1112,9 +1272,16 @@ function resourceAction(
   resource: "d1" | "r2" | "access_service_token",
   name: string,
   capability: SetupCapability,
+  input: SetupInput,
   existing?: { id?: string; name?: string },
 ): SetupAction {
-  if (existing !== undefined) return { resource, operation: "reuse", name, id: existing.id };
+  if (existing !== undefined)
+    return {
+      resource,
+      operation: input.deploymentManifest === undefined ? "adopt" : "reuse",
+      name,
+      id: existing.id,
+    };
   const operation = blockedOperation(capability);
   return {
     resource,
@@ -1124,9 +1291,132 @@ function resourceAction(
   };
 }
 
+function buildDeploymentManifest(
+  input: SetupInput,
+  normalized: NormalizedSetupInput,
+  account: SetupAccount,
+  zone: SetupZone,
+  state: ExistingState,
+): SetupDeploymentManifest {
+  if (input.deploymentManifest !== undefined) return input.deploymentManifest;
+  const resources = {} as Record<SetupResourceKey, SetupResourceIntent>;
+  resources.d1 = intent(input, CLOUDFLARE_SETUP_NAMES.d1, state.d1);
+  resources.r2 = intent(
+    input,
+    CLOUDFLARE_SETUP_NAMES.r2,
+    state.r2 === undefined ? undefined : { id: state.r2.name },
+    CLOUDFLARE_SETUP_NAMES.r2,
+  );
+  for (const surface of ["owner", "private"] as const) {
+    resources[resourceKey("access_application", surface)] = intent(
+      input,
+      CLOUDFLARE_SETUP_NAMES.accessApplications[surface],
+      state.accessApplications[surface],
+    );
+    resources[resourceKey("access_email_policy", surface)] = intent(
+      input,
+      CLOUDFLARE_SETUP_NAMES.accessPolicies.email,
+      state.accessPolicies[surface]?.email,
+    );
+    resources[resourceKey("access_service_token_policy", surface)] = intent(
+      input,
+      CLOUDFLARE_SETUP_NAMES.accessPolicies.serviceToken,
+      state.accessPolicies[surface]?.serviceToken,
+    );
+  }
+  resources.access_service_token = intent(
+    input,
+    CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+    state.accessServiceToken,
+  );
+  resources.worker_service = intent(input, "shlook", state.workerService, "shlook");
+  for (const surface of ["owner", "private", "public", "share"] as const) {
+    const hostname = new URL(normalized.origins[surface]).hostname;
+    const matches = state.workersDomains.filter((record) => record.hostname === hostname);
+    const existing = exactOne(matches);
+    resources[resourceKey("workers_domain", surface)] = intent(input, hostname, existing);
+  }
+  return {
+    version: 1,
+    domain: normalized.domain,
+    ownerEmail: normalized.ownerEmail,
+    accountId: account.id,
+    zoneId: zone.id,
+    resources,
+  };
+}
+
+function validateDeploymentOwnership(
+  input: SetupInput,
+  normalized: NormalizedSetupInput,
+  account: SetupAccount,
+  zone: SetupZone,
+  state: ExistingState,
+  discoverCreatedWorkersResources = false,
+): void {
+  const manifest = input.deploymentManifest;
+  if (
+    manifest !== undefined &&
+    (manifest.version !== 1 ||
+      manifest.domain !== normalized.domain ||
+      manifest.ownerEmail !== normalized.ownerEmail ||
+      manifest.accountId !== account.id ||
+      manifest.zoneId !== zone.id)
+  ) {
+    manifestMismatch();
+  }
+
+  expectedResource(input, "d1", CLOUDFLARE_SETUP_NAMES.d1, state.d1);
+  expectedResource(
+    input,
+    "r2",
+    CLOUDFLARE_SETUP_NAMES.r2,
+    state.r2 === undefined ? undefined : { id: state.r2.name },
+  );
+  for (const surface of ["owner", "private"] as const) {
+    expectedResource(
+      input,
+      resourceKey("access_application", surface),
+      CLOUDFLARE_SETUP_NAMES.accessApplications[surface],
+      state.accessApplications[surface],
+    );
+    expectedResource(
+      input,
+      resourceKey("access_email_policy", surface),
+      CLOUDFLARE_SETUP_NAMES.accessPolicies.email,
+      state.accessPolicies[surface]?.email,
+    );
+    expectedResource(
+      input,
+      resourceKey("access_service_token_policy", surface),
+      CLOUDFLARE_SETUP_NAMES.accessPolicies.serviceToken,
+      state.accessPolicies[surface]?.serviceToken,
+    );
+  }
+  expectedResource(
+    input,
+    "access_service_token",
+    CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+    state.accessServiceToken,
+  );
+  expectedResource(input, "worker_service", "shlook", state.workerService);
+  for (const surface of ["owner", "private", "public", "share"] as const) {
+    const hostname = new URL(normalized.origins[surface]).hostname;
+    const matches = state.workersDomains.filter((record) => record.hostname === hostname);
+    expectedResource(
+      input,
+      resourceKey("workers_domain", surface),
+      hostname,
+      exactOne(matches),
+      discoverCreatedWorkersResources,
+    );
+  }
+}
+
 async function inspectSetup(
   input: SetupInput,
   dependencies: CloudflareSetupDependencies,
+  discoverCreatedWorkersResources = false,
 ): Promise<Inspection> {
   const normalized = normalizeInput(input);
   const client = new CloudflareApiClient(dependencies);
@@ -1134,13 +1424,15 @@ async function inspectSetup(
   const account = await resolveAccount(client, normalized.accountId);
   const zone = await resolveZone(client, account.id, normalized.domain);
 
-  const [d1Probe, r2Probe, appsProbe, serviceTokenProbe, workersDomainsProbe] = await Promise.all([
-    probe(() => inspectD1(client, account.id)),
-    probe(() => inspectR2(client, account.id)),
-    probe(() => inspectApplications(client, account.id, normalized.origins)),
-    probe(() => inspectServiceToken(client, account.id)),
-    probe(() => inspectWorkersDomains(client, account.id, zone.id, normalized.origins)),
-  ]);
+  const [d1Probe, r2Probe, appsProbe, serviceTokenProbe, workersServiceProbe, workersDomainsProbe] =
+    await Promise.all([
+      probe(() => inspectD1(client, account.id)),
+      probe(() => inspectR2(client, account.id)),
+      probe(() => inspectApplications(client, account.id, normalized.origins)),
+      probe(() => inspectServiceToken(client, account.id)),
+      probe(() => inspectWorkerService(client, account.id)),
+      probe(() => inspectWorkersDomains(client, account.id, zone.id, normalized.origins)),
+    ]);
 
   const accessApplications: ExistingState["accessApplications"] = appsProbe.value ?? {};
   const accessServiceToken = serviceTokenProbe.value;
@@ -1186,6 +1478,7 @@ async function inspectSetup(
     accessApplications: appsProbe.capability,
     accessPolicies: policiesCapability,
     accessServiceTokens: serviceTokenProbe.capability,
+    workersServices: workersServiceProbe.capability,
     workersDomains: workersDomainsProbe.capability,
   };
   const state: ExistingState = {
@@ -1194,18 +1487,32 @@ async function inspectSetup(
     accessApplications,
     accessPolicies,
     accessServiceToken,
+    workerService: workersServiceProbe.value,
     workersDomains: workersDomainsProbe.value ?? [],
   };
+  validateDeploymentOwnership(
+    input,
+    normalized,
+    account,
+    zone,
+    state,
+    discoverCreatedWorkersResources,
+  );
+  const deploymentManifest = buildDeploymentManifest(input, normalized, account, zone, state);
 
   const actions: SetupAction[] = [
-    resourceAction("d1", CLOUDFLARE_SETUP_NAMES.d1, capabilities.d1, state.d1),
-    resourceAction("r2", CLOUDFLARE_SETUP_NAMES.r2, capabilities.r2, state.r2),
+    resourceAction("d1", CLOUDFLARE_SETUP_NAMES.d1, capabilities.d1, input, state.d1),
+    resourceAction("r2", CLOUDFLARE_SETUP_NAMES.r2, capabilities.r2, input, state.r2),
   ];
   for (const surface of ["owner", "private"] as const) {
     const app = state.accessApplications[surface];
     const hostname = new URL(normalized.origins[surface]).hostname;
     const appOperation =
-      app === undefined ? blockedOperation(capabilities.accessApplications) : "reuse";
+      app === undefined
+        ? blockedOperation(capabilities.accessApplications)
+        : input.deploymentManifest === undefined
+          ? "adopt"
+          : "reuse";
     actions.push({
       resource: "access_application",
       operation: appOperation,
@@ -1229,6 +1536,7 @@ async function inspectSetup(
           "access_service_token",
           CLOUDFLARE_SETUP_NAMES.accessServiceToken,
           capabilities.accessServiceTokens,
+          input,
           state.accessServiceToken,
         ),
   );
@@ -1237,7 +1545,11 @@ async function inspectSetup(
     for (const kind of ["email", "serviceToken"] as const) {
       const existing = policies?.[kind];
       const operation =
-        existing === undefined ? blockedOperation(capabilities.accessPolicies) : "reuse";
+        existing === undefined
+          ? blockedOperation(capabilities.accessPolicies)
+          : input.deploymentManifest === undefined
+            ? "adopt"
+            : "reuse";
       actions.push({
         resource: kind === "email" ? "access_email_policy" : "access_service_token_policy",
         operation,
@@ -1248,6 +1560,20 @@ async function inspectSetup(
       });
     }
   }
+  actions.push({
+    resource: "worker_service",
+    operation:
+      state.workerService === undefined
+        ? blockedOperation(capabilities.workersServices)
+        : input.deploymentManifest === undefined
+          ? "adopt"
+          : "reuse",
+    name: "shlook",
+    ...(state.workerService === undefined ? {} : { id: state.workerService.id }),
+    ...(state.workerService === undefined && capabilities.workersServices.status !== "available"
+      ? { reason: "capability_unavailable" }
+      : {}),
+  });
   actions.push({
     resource: "workers_domains",
     operation: "controller",
@@ -1270,6 +1596,7 @@ async function inspectSetup(
       origins: normalized.origins,
       capabilities,
       actions,
+      deploymentManifest,
     },
   };
 }
@@ -1279,6 +1606,23 @@ export async function planSetup(
   dependencies: CloudflareSetupDependencies,
 ): Promise<SetupPlan> {
   return (await inspectSetup(input, dependencies)).plan;
+}
+
+export async function reconcileSetupDeploymentManifest(
+  input: SetupInput & { deploymentManifest: SetupDeploymentManifest },
+  dependencies: CloudflareSetupDependencies,
+): Promise<SetupDeploymentManifest> {
+  const inspection = await inspectSetup(input, dependencies, true);
+  const resources = { ...input.deploymentManifest.resources };
+  for (const surface of ["owner", "private", "public", "share"] as const) {
+    const key = resourceKey("workers_domain", surface);
+    const hostname = new URL(inspection.normalized.origins[surface]).hostname;
+    const existing = exactOne(
+      inspection.state.workersDomains.filter((record) => record.hostname === hostname),
+    );
+    if (existing !== undefined) resources[key] = { ...resources[key], id: existing.id };
+  }
+  return { ...input.deploymentManifest, resources };
 }
 
 function requireObjectIdentity(
@@ -1351,6 +1695,7 @@ async function createApplication(
 async function createServiceToken(
   client: CloudflareApiClient,
   accountId: string,
+  saveServiceToken: (token: PendingServiceToken) => Promise<void>,
 ): Promise<{ resource: AppliedServiceToken; credentials: CreatedServiceTokenCredentials }> {
   const result = objectResult(
     await client.request(`/accounts/${accountId}/access/service_tokens`, "POST", {
@@ -1369,14 +1714,20 @@ async function createServiceToken(
       "Cloudflare API returned an invalid response",
     );
   }
+  const pending = {
+    resourceId: result.id,
+    clientId: result.client_id,
+    clientSecret: result.client_secret,
+  };
+  await persistSetupState(() => saveServiceToken(pending));
   return {
     resource: {
-      id: result.id,
+      id: pending.resourceId,
       name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
-      clientId: result.client_id,
+      clientId: pending.clientId,
       created: true,
     },
-    credentials: { clientId: result.client_id, clientSecret: result.client_secret },
+    credentials: { clientId: pending.clientId, clientSecret: pending.clientSecret },
   };
 }
 
@@ -1408,6 +1759,17 @@ async function createPolicy(
   return { id: result.id, name, created: true };
 }
 
+async function persistSetupState(operation: () => Promise<void>): Promise<void> {
+  try {
+    await operation();
+  } catch {
+    throw new CloudflareSetupError(
+      "setup_state_persistence_failed",
+      "unable to persist transactional shlook setup state",
+    );
+  }
+}
+
 export async function applySetup(
   input: ApplySetupInput,
   dependencies: CloudflareSetupDependencies,
@@ -1419,6 +1781,13 @@ export async function applySetup(
     throw new CloudflareSetupError(
       "setup_capabilities_unavailable",
       "required Cloudflare setup capabilities are unavailable",
+    );
+  }
+  const persistence = input.persistence;
+  if (persistence === undefined) {
+    throw new CloudflareSetupError(
+      "setup_state_persistence_required",
+      "transactional shlook setup persistence is required before Cloudflare mutations",
     );
   }
 
@@ -1442,13 +1811,17 @@ export async function applySetup(
     );
   }
 
+  await persistSetupState(() => persistence.saveIntent(plan.deploymentManifest));
+
   const accountId = plan.account.id;
   const d1: AppliedResource =
     state.d1 === undefined ? await createD1(client, accountId) : { ...state.d1, created: false };
+  if (d1.created) await persistSetupState(() => persistence.saveResource("d1", d1.id));
   const r2: AppliedResource =
     state.r2 === undefined
       ? await createR2(client, accountId)
       : { id: state.r2.name, name: state.r2.name, created: false };
+  if (r2.created) await persistSetupState(() => persistence.saveResource("r2", r2.id));
 
   const accessApplications = {} as Record<SetupSurface, AppliedAccessApplication>;
   for (const surface of ["owner", "private"] as const) {
@@ -1457,14 +1830,27 @@ export async function applySetup(
       existing === undefined
         ? await createApplication(client, accountId, surface, normalized.origins[surface])
         : { ...existing, created: false };
+    if (accessApplications[surface].created) {
+      await persistSetupState(() =>
+        persistence.saveResource(
+          resourceKey("access_application", surface),
+          accessApplications[surface].id,
+        ),
+      );
+    }
   }
 
   let accessServiceToken: AppliedServiceToken;
   let createdServiceTokenCredentials: CreatedServiceTokenCredentials | undefined;
   if (state.accessServiceToken === undefined) {
-    const created = await createServiceToken(client, accountId);
+    const created = await createServiceToken(client, accountId, (token) =>
+      persistence.saveServiceToken(token),
+    );
     accessServiceToken = created.resource;
     createdServiceTokenCredentials = created.credentials;
+    await persistSetupState(() =>
+      persistence.saveResource("access_service_token", accessServiceToken.id),
+    );
   } else {
     accessServiceToken = {
       id: state.accessServiceToken.id,
@@ -1488,6 +1874,11 @@ export async function applySetup(
             [{ email: { email: normalized.ownerEmail } }],
           )
         : { ...existing.email, created: false };
+    if (email.created) {
+      await persistSetupState(() =>
+        persistence.saveResource(resourceKey("access_email_policy", surface), email.id),
+      );
+    }
     const serviceToken =
       existing?.serviceToken === undefined
         ? await createPolicy(
@@ -1499,6 +1890,14 @@ export async function applySetup(
             [{ service_token: { token_id: accessServiceToken.id } }],
           )
         : { ...existing.serviceToken, created: false };
+    if (serviceToken.created) {
+      await persistSetupState(() =>
+        persistence.saveResource(
+          resourceKey("access_service_token_policy", surface),
+          serviceToken.id,
+        ),
+      );
+    }
     accessPolicies[surface] = { email, serviceToken };
   }
 

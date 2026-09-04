@@ -7,11 +7,15 @@ import { dirname, isAbsolute, join, normalize, parse as parsePath } from "node:p
 import {
   applySetup,
   planSetup,
+  reconcileSetupDeploymentManifest,
   type ApplySetupInput,
   type ApplySetupResult,
   type CloudflareSetupDependencies,
+  type PendingServiceToken,
+  type SetupDeploymentManifest,
   type SetupInput,
   type SetupPlan,
+  type SetupResourceKey,
 } from "./cli-setup.ts";
 import { encodeConnectionCredential, type ConnectionCredential } from "./cli-connection.ts";
 
@@ -20,6 +24,9 @@ const DIRECTORY_MODE = 0o700;
 const VERIFY_ATTEMPTS = 6;
 const VERIFY_DELAY_MS = 2_000;
 const DEPLOYMENT_SECRET_FILE = "secret-encryption-key";
+const DEPLOYMENT_MANIFEST_FILE = "manifest.json";
+const PENDING_SERVICE_TOKEN_FILE = "pending-service-token.json";
+const MAX_STATE_BYTES = 65_536;
 
 export interface SetupCommandOptions {
   cwd: string;
@@ -73,6 +80,10 @@ export interface SetupRuntimeDependencies extends CloudflareSetupDependencies {
     input: ApplySetupInput,
     dependencies: CloudflareSetupDependencies,
   ) => Promise<ApplySetupResult>;
+  reconcileCloudflareSetup?: (
+    input: SetupInput & { deploymentManifest: SetupDeploymentManifest },
+    dependencies: CloudflareSetupDependencies,
+  ) => Promise<SetupDeploymentManifest>;
   fs?: SetupRuntimeFileSystem;
   home?: () => string;
   randomBytes?: (size: number) => Uint8Array;
@@ -91,7 +102,7 @@ export interface SetupRuntimeResult {
   origins: ApplySetupResult["origins"];
   resources: ApplySetupResult["resources"];
   config: { path: string };
-  deployment: { migrationsApplied: true; deployed: true; secretStored: true };
+  deployment: { migrationsApplied: true; deployed: true; secretDeployed: true };
   verification: { ownerHealth: true; privateAccess: true };
   connection: { stored: true; path: string };
   connectionToken?: string;
@@ -104,6 +115,8 @@ export type SetupRuntimeErrorCode =
   | "setup_secret_storage_failed"
   | "setup_verification_failed"
   | "connection_persistence_failed"
+  | "setup_manifest_storage_failed"
+  | "setup_pending_credentials_failed"
   | "service_token_secret_unavailable";
 
 export class SetupRuntimeError extends Error {
@@ -255,6 +268,269 @@ function errorCode(cause: unknown): string | undefined {
   return descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "string"
     ? descriptor.value
     : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const setupResourceKeys: SetupResourceKey[] = [
+  "d1",
+  "r2",
+  "access_application_owner",
+  "access_application_private",
+  "access_service_token",
+  "access_email_policy_owner",
+  "access_email_policy_private",
+  "access_service_token_policy_owner",
+  "access_service_token_policy_private",
+  "worker_service",
+  "workers_domain_owner",
+  "workers_domain_private",
+  "workers_domain_public",
+  "workers_domain_share",
+];
+
+interface PendingServiceTokenState extends PendingServiceToken {
+  version: 1;
+  domain: string;
+  ownerEmail: string;
+  accountId: string;
+  zoneId: string;
+}
+
+function manifestFailure(): SetupRuntimeError {
+  return new SetupRuntimeError(
+    "setup_manifest_storage_failed",
+    "unable to load or save the deployment ownership manifest",
+  );
+}
+
+function pendingFailure(): SetupRuntimeError {
+  return new SetupRuntimeError(
+    "setup_pending_credentials_failed",
+    "unable to load or save pending Access credentials",
+  );
+}
+
+function statePath(dependencies: SetupRuntimeDependencies, file: string): string {
+  try {
+    return join(dirname(resolveSetupConfigPath(dependencies.env, dependencies.home)), file);
+  } catch {
+    throw file === DEPLOYMENT_MANIFEST_FILE ? manifestFailure() : pendingFailure();
+  }
+}
+
+async function readOwnerFile(
+  path: string,
+  fs: SetupRuntimeFileSystem,
+  failure: () => SetupRuntimeError,
+): Promise<string | undefined> {
+  let handle: SetupRuntimeFileHandle;
+  try {
+    handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw failure();
+  }
+  try {
+    const metadata = await handle.stat();
+    const currentUid = process.getuid?.();
+    if (
+      !metadata.isFile() ||
+      (metadata.mode & 0o777) !== CONFIG_MODE ||
+      metadata.size <= 0 ||
+      metadata.size > MAX_STATE_BYTES ||
+      (currentUid !== undefined && metadata.uid !== currentUid)
+    ) {
+      throw failure();
+    }
+    return await handle.readFile({ encoding: "utf8" });
+  } catch (cause) {
+    if (cause instanceof SetupRuntimeError) throw cause;
+    throw failure();
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+async function atomicWriteOwnerFile(
+  path: string,
+  data: string,
+  dependencies: SetupRuntimeDependencies,
+  failure: () => SetupRuntimeError,
+): Promise<void> {
+  const fs = dependencies.fs ?? defaultFileSystem;
+  const directory = dirname(path);
+  const id = (dependencies.randomId ?? randomUUID)();
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(id)) throw failure();
+  const temporaryPath = join(directory, `.${path.slice(path.lastIndexOf("/") + 1)}.${id}`);
+  let created = false;
+  try {
+    await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await fs.chmod(directory, DIRECTORY_MODE);
+    await fs.writeFile(temporaryPath, data, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: CONFIG_MODE,
+    });
+    created = true;
+    await fs.rename(temporaryPath, path);
+    created = false;
+    await fs.chmod(path, CONFIG_MODE);
+  } catch {
+    throw failure();
+  } finally {
+    if (created) await fs.unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+async function atomicCreateOwnerFile(
+  path: string,
+  data: string,
+  dependencies: SetupRuntimeDependencies,
+  failure: () => SetupRuntimeError,
+): Promise<void> {
+  const fs = dependencies.fs ?? defaultFileSystem;
+  const directory = dirname(path);
+  const id = (dependencies.randomId ?? randomUUID)();
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(id)) throw failure();
+  const temporaryPath = join(directory, `.${path.slice(path.lastIndexOf("/") + 1)}.${id}`);
+  let created = false;
+  try {
+    await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await fs.chmod(directory, DIRECTORY_MODE);
+    await fs.writeFile(temporaryPath, data, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: CONFIG_MODE,
+    });
+    created = true;
+    try {
+      await fs.link(temporaryPath, path);
+    } catch (cause) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+      const winner = await readOwnerFile(path, fs, failure);
+      if (winner !== data) throw failure();
+      return;
+    }
+    await fs.chmod(path, CONFIG_MODE);
+  } catch (cause) {
+    if (cause instanceof SetupRuntimeError) throw cause;
+    throw failure();
+  } finally {
+    if (created) await fs.unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+function parseManifest(raw: string): SetupDeploymentManifest {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    throw manifestFailure();
+  }
+  if (
+    !isRecord(decoded) ||
+    Object.keys(decoded).length !== 6 ||
+    decoded.version !== 1 ||
+    typeof decoded.domain !== "string" ||
+    typeof decoded.ownerEmail !== "string" ||
+    typeof decoded.accountId !== "string" ||
+    typeof decoded.zoneId !== "string" ||
+    !isRecord(decoded.resources) ||
+    Object.keys(decoded.resources).length !== setupResourceKeys.length
+  )
+    throw manifestFailure();
+  for (const key of setupResourceKeys) {
+    const value = decoded.resources[key];
+    if (
+      !isRecord(value) ||
+      ![2, 3].includes(Object.keys(value).length) ||
+      Object.keys(value).some((field) => !["action", "name", "id"].includes(field)) ||
+      !["create", "adopt"].includes(String(value.action)) ||
+      typeof value.name !== "string" ||
+      value.name.length === 0 ||
+      value.name.length > 4096 ||
+      (value.id !== undefined &&
+        (typeof value.id !== "string" || value.id.length === 0 || value.id.length > 4096))
+    )
+      throw manifestFailure();
+  }
+  return decoded as unknown as SetupDeploymentManifest;
+}
+
+async function loadDeploymentManifest(
+  dependencies: SetupRuntimeDependencies,
+): Promise<SetupDeploymentManifest | undefined> {
+  const raw = await readOwnerFile(
+    statePath(dependencies, DEPLOYMENT_MANIFEST_FILE),
+    dependencies.fs ?? defaultFileSystem,
+    manifestFailure,
+  );
+  return raw === undefined ? undefined : parseManifest(raw);
+}
+
+async function saveDeploymentManifest(
+  manifest: SetupDeploymentManifest,
+  dependencies: SetupRuntimeDependencies,
+  createOnly = false,
+): Promise<void> {
+  await (createOnly ? atomicCreateOwnerFile : atomicWriteOwnerFile)(
+    statePath(dependencies, DEPLOYMENT_MANIFEST_FILE),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    dependencies,
+    manifestFailure,
+  );
+}
+
+function parsePending(raw: string): PendingServiceTokenState {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw pendingFailure();
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 8 ||
+    value.version !== 1 ||
+    ![
+      "domain",
+      "ownerEmail",
+      "accountId",
+      "zoneId",
+      "resourceId",
+      "clientId",
+      "clientSecret",
+    ].every((key) => typeof value[key] === "string" && (value[key] as string).length > 0) ||
+    Object.values(value).some((entry) => typeof entry === "string" && entry.length > 4096)
+  )
+    throw pendingFailure();
+  return value as unknown as PendingServiceTokenState;
+}
+
+async function loadPendingServiceToken(
+  dependencies: SetupRuntimeDependencies,
+): Promise<PendingServiceTokenState | undefined> {
+  const raw = await readOwnerFile(
+    statePath(dependencies, PENDING_SERVICE_TOKEN_FILE),
+    dependencies.fs ?? defaultFileSystem,
+    pendingFailure,
+  );
+  return raw === undefined ? undefined : parsePending(raw);
+}
+
+async function savePendingServiceToken(
+  pending: PendingServiceTokenState,
+  dependencies: SetupRuntimeDependencies,
+): Promise<void> {
+  await atomicCreateOwnerFile(
+    statePath(dependencies, PENDING_SERVICE_TOKEN_FILE),
+    `${JSON.stringify(pending)}\n`,
+    dependencies,
+    pendingFailure,
+  );
 }
 
 function validateDeploymentSecret(raw: string): string {
@@ -436,6 +712,49 @@ async function runWrangler(
   }
 }
 
+async function deployWithSecretFile(
+  dependencies: SetupRuntimeDependencies,
+  configPath: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  encryptionKey: string,
+): Promise<void> {
+  const fs = dependencies.fs ?? defaultFileSystem;
+  const id = (dependencies.randomId ?? randomUUID)();
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(id)) throw storageFailure();
+  const path = join(dirname(configPath), `.deploy-secrets.${id}.json`);
+  let created = false;
+  let failure: unknown;
+  try {
+    await fs.writeFile(
+      path,
+      `${JSON.stringify({ SHLOOK_SECRET_ENCRYPTION_KEY: encryptionKey })}\n`,
+      {
+        encoding: "utf8",
+        flag: "wx",
+        mode: CONFIG_MODE,
+      },
+    );
+    created = true;
+    await runWrangler(
+      dependencies,
+      ["deploy", "--strict", "--config", configPath, "--secrets-file", path],
+      environment,
+      "deploying the Worker with its encryption secret",
+    );
+  } catch (cause) {
+    failure = cause instanceof SetupRuntimeError ? cause : storageFailure();
+  } finally {
+    if (created) {
+      try {
+        await fs.unlink(path);
+      } catch {
+        if (failure === undefined) failure = storageFailure();
+      }
+    }
+  }
+  if (failure !== undefined) throw failure;
+}
+
 function accessHeaders(credential: ConnectionCredential): Headers {
   return new Headers({
     "CF-Access-Client-Id": credential.accessClientId,
@@ -511,10 +830,109 @@ export async function planSetupRuntime(
   input: SetupInput,
   dependencies: SetupRuntimeDependencies,
 ): Promise<SetupPlan> {
-  return (dependencies.planCloudflareSetup ?? planSetup)(input, {
-    env: dependencies.env,
-    fetch: dependencies.fetch,
-  });
+  const deploymentManifest = await loadDeploymentManifest(dependencies);
+  return (dependencies.planCloudflareSetup ?? planSetup)(
+    {
+      domain: input.domain,
+      ownerEmail: input.ownerEmail,
+      ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
+      ...(input.adoptExisting === true ? { adoptExisting: true } : {}),
+      ...(deploymentManifest === undefined ? {} : { deploymentManifest }),
+    },
+    {
+      env: dependencies.env,
+      fetch: dependencies.fetch,
+    },
+  );
+}
+
+function sameCredential(left: ConnectionCredential, right: ConnectionCredential): boolean {
+  return (
+    left.domain === right.domain &&
+    left.accessClientId === right.accessClientId &&
+    left.accessClientSecret === right.accessClientSecret
+  );
+}
+
+function credentialFromPending(pending: PendingServiceTokenState): ConnectionCredential {
+  return {
+    domain: pending.domain,
+    accessClientId: pending.clientId,
+    accessClientSecret: pending.clientSecret,
+  };
+}
+
+async function removePendingServiceToken(dependencies: SetupRuntimeDependencies): Promise<void> {
+  try {
+    await (dependencies.fs ?? defaultFileSystem).unlink(
+      statePath(dependencies, PENDING_SERVICE_TOKEN_FILE),
+    );
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw pendingFailure();
+  }
+}
+
+async function reconcileManifest(
+  input: SetupRuntimeInput,
+  manifest: SetupDeploymentManifest,
+  dependencies: SetupRuntimeDependencies,
+): Promise<SetupDeploymentManifest> {
+  const reconciled = await (
+    dependencies.reconcileCloudflareSetup ?? reconcileSetupDeploymentManifest
+  )(
+    {
+      domain: input.domain,
+      ownerEmail: input.ownerEmail,
+      ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
+      deploymentManifest: manifest,
+    },
+    { env: dependencies.env, fetch: dependencies.fetch },
+  );
+  if (JSON.stringify(reconciled) !== JSON.stringify(manifest)) {
+    await saveDeploymentManifest(reconciled, dependencies);
+  }
+  return reconciled;
+}
+
+function unresolvedWorkerDomains(manifest: SetupDeploymentManifest): boolean {
+  return (["owner", "private", "public", "share"] as const).some(
+    (surface) => manifest.resources[`workers_domain_${surface}`].id === undefined,
+  );
+}
+
+function assertPendingMatchesManifest(
+  pending: PendingServiceTokenState,
+  manifest: SetupDeploymentManifest,
+): void {
+  if (
+    pending.domain !== manifest.domain ||
+    pending.ownerEmail !== manifest.ownerEmail ||
+    pending.accountId !== manifest.accountId ||
+    pending.zoneId !== manifest.zoneId ||
+    (manifest.resources.access_service_token.id !== undefined &&
+      manifest.resources.access_service_token.id !== pending.resourceId)
+  ) {
+    throw pendingFailure();
+  }
+}
+
+async function verifiedPersistedConnection(
+  credential: ConnectionCredential,
+  dependencies: SetupRuntimeDependencies,
+): Promise<string> {
+  let path: string;
+  try {
+    path = await dependencies.persistConnection(credential);
+    if (dependencies.loadConnection === undefined) throw new Error("connection loader unavailable");
+    const loaded = await dependencies.loadConnection();
+    if (!sameCredential(loaded, credential)) throw new Error("persisted credential mismatch");
+  } catch {
+    throw new SetupRuntimeError(
+      "connection_persistence_failed",
+      "unable to save and verify connection credential",
+    );
+  }
+  return path;
 }
 
 export async function applySetupRuntime(
@@ -522,40 +940,97 @@ export async function applySetupRuntime(
   dependencies: SetupRuntimeDependencies,
 ): Promise<SetupRuntimeResult> {
   const existing = await storedCredential(input, dependencies);
-  const encryptionKey = await loadOrCreateDeploymentSecret(dependencies, existing === undefined);
+  let manifest = await loadDeploymentManifest(dependencies);
+  let pending = await loadPendingServiceToken(dependencies);
+  const mayCreateDeploymentSecret = manifest === undefined || pending !== undefined;
+  if (pending !== undefined) {
+    if (manifest === undefined) throw pendingFailure();
+    assertPendingMatchesManifest(pending, manifest);
+    const pendingCredential = credentialFromPending(pending);
+    if (existing !== undefined && !sameCredential(existing, pendingCredential)) {
+      throw pendingFailure();
+    }
+    if (manifest.resources.access_service_token.id === undefined) {
+      manifest = {
+        ...manifest,
+        resources: {
+          ...manifest.resources,
+          access_service_token: {
+            ...manifest.resources.access_service_token,
+            id: pending.resourceId,
+          },
+        },
+      };
+      await saveDeploymentManifest(manifest, dependencies);
+    }
+  }
+  if (manifest !== undefined && unresolvedWorkerDomains(manifest)) {
+    manifest = await reconcileManifest(input, manifest, dependencies);
+  }
+
+  let createdCredential: ConnectionCredential | undefined;
+  const recoverableCredential = pending === undefined ? existing : credentialFromPending(pending);
   const result = await (dependencies.applyCloudflareSetup ?? applySetup)(
     {
       domain: input.domain,
       ownerEmail: input.ownerEmail,
       ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
-      ...(existing === undefined
+      ...(input.adoptExisting === true ? { adoptExisting: true } : {}),
+      ...(manifest === undefined ? {} : { deploymentManifest: manifest }),
+      ...(recoverableCredential === undefined
         ? {}
         : {
             existingServiceToken: {
-              clientId: existing.accessClientId,
-              clientSecret: existing.accessClientSecret,
+              clientId: recoverableCredential.accessClientId,
+              clientSecret: recoverableCredential.accessClientSecret,
             },
           }),
+      persistence: {
+        saveIntent: async (nextManifest) => {
+          if (manifest !== undefined && JSON.stringify(manifest) !== JSON.stringify(nextManifest)) {
+            throw manifestFailure();
+          }
+          const createOnly = manifest === undefined;
+          await saveDeploymentManifest(nextManifest, dependencies, createOnly);
+          manifest = nextManifest;
+        },
+        saveResource: async (resource, id) => {
+          if (manifest === undefined) throw manifestFailure();
+          const current = manifest.resources[resource];
+          if (current.id !== undefined && current.id !== id) throw manifestFailure();
+          manifest = {
+            ...manifest,
+            resources: { ...manifest.resources, [resource]: { ...current, id } },
+          };
+          await saveDeploymentManifest(manifest, dependencies);
+        },
+        saveServiceToken: async (token) => {
+          if (manifest === undefined) throw pendingFailure();
+          pending = {
+            version: 1,
+            domain: manifest.domain,
+            ownerEmail: manifest.ownerEmail,
+            accountId: manifest.accountId,
+            zoneId: manifest.zoneId,
+            ...token,
+          };
+          await savePendingServiceToken(pending, dependencies);
+          createdCredential = credentialFromPending(pending);
+        },
+      },
     },
     { env: dependencies.env, fetch: dependencies.fetch },
   );
-  const serviceToken =
-    result.createdServiceTokenCredentials ??
-    (existing === undefined
-      ? undefined
-      : { clientId: existing.accessClientId, clientSecret: existing.accessClientSecret });
-  if (serviceToken === undefined) {
+  const credential =
+    createdCredential ?? (pending === undefined ? existing : credentialFromPending(pending));
+  if (credential === undefined) {
     throw new SetupRuntimeError(
       "service_token_secret_unavailable",
       "the existing shlook Access service token secret cannot be recovered",
     );
   }
-  const credential: ConnectionCredential = {
-    domain: input.domain,
-    accessClientId: serviceToken.clientId,
-    accessClientSecret: serviceToken.clientSecret,
-  };
 
+  const encryptionKey = await loadOrCreateDeploymentSecret(dependencies, mayCreateDeploymentSecret);
   const configPath = await writeSetupConfig(input, result, dependencies);
   const commandEnvironment = {
     CLOUDFLARE_API_TOKEN: bootstrapToken(dependencies.env),
@@ -567,30 +1042,13 @@ export async function applySetupRuntime(
     commandEnvironment,
     "applying database migrations",
   );
-  await runWrangler(
-    dependencies,
-    ["deploy", "--config", configPath],
-    commandEnvironment,
-    "deploying the Worker",
-  );
-  await runWrangler(
-    dependencies,
-    ["secret", "put", "SHLOOK_SECRET_ENCRYPTION_KEY", "--config", configPath],
-    commandEnvironment,
-    "storing the encryption secret",
-    `${encryptionKey}\n`,
-  );
+  await deployWithSecretFile(dependencies, configPath, commandEnvironment, encryptionKey);
+  if (manifest === undefined) throw manifestFailure();
+  manifest = await reconcileManifest(input, manifest, dependencies);
   await verifyDeployment(result, credential, dependencies);
 
-  let connectionPath: string;
-  try {
-    connectionPath = await dependencies.persistConnection(credential);
-  } catch {
-    throw new SetupRuntimeError(
-      "connection_persistence_failed",
-      "unable to save connection credential",
-    );
-  }
+  const connectionPath = await verifiedPersistedConnection(credential, dependencies);
+  if (pending !== undefined) await removePendingServiceToken(dependencies);
 
   return {
     mode: "apply",
@@ -599,7 +1057,7 @@ export async function applySetupRuntime(
     origins: result.origins,
     resources: result.resources,
     config: { path: configPath },
-    deployment: { migrationsApplied: true, deployed: true, secretStored: true },
+    deployment: { migrationsApplied: true, deployed: true, secretDeployed: true },
     verification: { ownerHealth: true, privateAccess: true },
     connection: { stored: true, path: connectionPath },
     ...(input.showConnectionToken
