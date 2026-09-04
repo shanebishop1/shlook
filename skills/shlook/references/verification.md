@@ -52,6 +52,6 @@ Troubleshooting order:
    `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json`, ownership manifest,
    pending-service-token path, and retained encryption-key path without printing file contents,
    then rerun `setup --plan` and report its structured capabilities, blocked actions, or error.
-   A plan that is not ready is not successful setup; a service token within seven days of expiry
-   blocks setup and is not renewed automatically.
+   A plan that is not ready is not successful setup. Apply renews and rotates a manifest-owned
+   service token within seven days of expiry; an expired or unowned token remains a conflict.
 6. Re-run `verify` and report the exact structured error.

@@ -120,11 +120,11 @@ and all four explicit origin variables. Partial profiles fail rather than borrow
 Rerunning apply reuses manifest-owned resources only when their identity and configuration match
 exactly, then reapplies migrations, redeploys with the persisted encryption key, verifies, and
 refreshes local auth. An interrupted first apply recovers one-time service-token credentials from
-the owner-only pending file instead of creating a duplicate. Setup never automatically renews or
-duplicates a service token: an expired token is a conflict, and a token expiring within seven
-days causes plan to report a blocked action and apply to stop. Renewal is not part of the setup
-flow and must be handled explicitly. Unowned fixed-name collisions stop unless intentional
-adoption is requested.
+the owner-only pending file instead of creating a duplicate. A manifest-owned token expiring
+within seven days is extended to 90 days and rotated during apply; the replacement secret is
+journaled before deployment and promoted only after verification. Interrupted creation or
+rotation is recovered by rotating that exact manifest-owned token again. Expired tokens remain a
+conflict. Unowned fixed-name collisions stop unless intentional adoption is requested.
 
 ## Manual deployment checklist
 
