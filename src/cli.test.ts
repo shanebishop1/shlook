@@ -66,6 +66,30 @@ function harness(overrides: Partial<CliDependencies> = {}) {
   return { dependencies, stdout, stderr };
 }
 
+function simulatedRedirectFetch(
+  respond: (input: string | URL | Request, init?: RequestInit) => Promise<Response> | Response,
+) {
+  const requests: Array<{ url: string; headers: Headers }> = [];
+  const implementation = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    requests.push({ url: String(input), headers: new Headers(init?.headers) });
+    const response = await respond(input, init);
+    const location = response.headers.get("location");
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      init?.redirect !== "manual" &&
+      location
+    ) {
+      return implementation(location, init);
+    }
+    return response;
+  };
+  return { fetch: vi.fn(implementation), requests };
+}
+
 test("emits the stable JSON envelope for status", async () => {
   const fetch = vi.fn(async () => Response.json({ ok: true, service: "shlook" }));
   const context = harness({ fetch });
@@ -109,6 +133,7 @@ test("auth check sends Access headers without leaking credentials", async () => 
 
   expect(await runCli(["auth", "check", "--json"], context.dependencies)).toBe(0);
   const request = fetch.mock.calls[0][1];
+  expect(request?.redirect).toBe("manual");
   expect(new Headers(request?.headers).get("CF-Access-Client-Id")).toBe("client-id-value");
   expect(new Headers(request?.headers).get("CF-Access-Client-Secret")).toBe("super-secret-value");
   expect(context.stdout.join("") + context.stderr.join("")).not.toContain("super-secret-value");
@@ -376,6 +401,7 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
     ),
   ).toBe(0);
   const create = fetch.mock.calls.find(([url]) => String(url).endsWith("/api/assets"));
+  expect(fetch.mock.calls.every(([, init]) => init?.redirect === "manual")).toBe(true);
   expect(JSON.parse(String(create?.[1]?.body))).toEqual({
     name: "Release preview",
     description: "Owner archive refinement",
@@ -510,7 +536,126 @@ test("verify uses GET against the configured private origin", async () => {
   expect(fetch.mock.calls[0][0]).toBe(`${DEFAULT_ORIGIN}/api/assets/${assetId}`);
   expect(fetch.mock.calls[1][0]).toBe(`https://private.test.example/assets/${assetId}/`);
   expect(fetch.mock.calls[1][1]?.method).toBe("GET");
+  expect(fetch.mock.calls.every(([, init]) => init?.redirect === "manual")).toBe(true);
   expect(JSON.parse(context.stdout[0]).data).toEqual({ assetId, verified: true, status: 200 });
+});
+
+test("Access-authenticated requests reject redirects without forwarding credentials", async () => {
+  const redirect = () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: "https://attacker.invalid/capture" },
+    });
+
+  const apiProbe = simulatedRedirectFetch((input) =>
+    String(input).startsWith("https://attacker.invalid/")
+      ? Response.json({ ok: true })
+      : redirect(),
+  );
+  const apiContext = harness({ fetch: apiProbe.fetch });
+  expect(await runCli(["status", "--json"], apiContext.dependencies)).toBe(1);
+  expect(JSON.parse(apiContext.stderr[0]).error).toMatchObject({ code: "api_error", status: 302 });
+  expect(apiProbe.requests.map(({ url }) => url)).toEqual([`${DEFAULT_ORIGIN}/health`]);
+
+  const connectProbe = simulatedRedirectFetch((input) =>
+    String(input).startsWith("https://attacker.invalid/")
+      ? Response.json({ ok: true })
+      : redirect(),
+  );
+  const connectContext = harness({
+    env: {},
+    fetch: connectProbe.fetch,
+    readSecretInput: vi.fn(async () => encodeConnectionCredential(storedCredential)),
+    persistConnection: vi.fn(),
+  });
+  expect(await runCli(["connect", "--json"], connectContext.dependencies)).toBe(1);
+  expect(JSON.parse(connectContext.stderr[0]).error).toMatchObject({
+    code: "connection_verification_failed",
+    status: 302,
+  });
+  expect(connectProbe.requests.map(({ url }) => url)).toEqual([
+    "https://shlook.stored.example.com/health",
+  ]);
+
+  const publishProbe = simulatedRedirectFetch((input, init) => {
+    const url = String(input);
+    if (url.startsWith("https://attacker.invalid/")) {
+      return Response.json({ file: { uploadId } }, { status: 201 });
+    }
+    if (url.endsWith("/api/assets") && init?.method === "POST") {
+      return Response.json({ asset: { id: assetId } }, { status: 201 });
+    }
+    if (init?.method === "PUT") return redirect();
+    return new Response(null, { status: 204 });
+  });
+  const publishContext = harness({
+    fetch: publishProbe.fetch,
+    loadPublishInput: vi.fn(async () => ({
+      entrypoint: "index.html",
+      files: [
+        {
+          path: "index.html",
+          bytes: new TextEncoder().encode("safe"),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+    })),
+  });
+  expect(
+    await runCli(
+      ["publish", "/artifact", "--name", "Redirected upload", "--json"],
+      publishContext.dependencies,
+    ),
+  ).toBe(1);
+  expect(JSON.parse(publishContext.stderr[0]).error.code).toBe("publish_failed");
+  expect(publishProbe.requests.map(({ url }) => url)).toEqual([
+    `${DEFAULT_ORIGIN}/api/assets`,
+    `${DEFAULT_ORIGIN}/api/assets/${assetId}/files/index.html`,
+    `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+  ]);
+
+  const verifyProbe = simulatedRedirectFetch((input) => {
+    const url = String(input);
+    if (url.startsWith("https://attacker.invalid/")) return new Response(null, { status: 200 });
+    if (url.startsWith(DEFAULT_ORIGIN)) {
+      return Response.json({ asset: { id: assetId, state: "live" } });
+    }
+    return redirect();
+  });
+  const verifyContext = harness({ fetch: verifyProbe.fetch });
+  expect(await runCli(["verify", assetId, "--json"], verifyContext.dependencies)).toBe(1);
+  expect(JSON.parse(verifyContext.stderr[0]).error).toMatchObject({
+    code: "verification_failed",
+    status: 302,
+  });
+  expect(verifyProbe.requests.map(({ url }) => url)).toEqual([
+    `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+    `https://private.example.com/assets/${assetId}/`,
+  ]);
+
+  for (const probe of [apiProbe, connectProbe, publishProbe, verifyProbe]) {
+    expect(probe.requests.some(({ url }) => url.startsWith("https://attacker.invalid/"))).toBe(
+      false,
+    );
+    expect(probe.requests.every(({ headers }) => headers.has("CF-Access-Client-Secret"))).toBe(
+      true,
+    );
+  }
+});
+
+test("owner API rejects the full 3xx status range", async () => {
+  for (const status of [300, 301, 302, 303, 304, 305, 306, 307, 308, 399]) {
+    const fetch = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit): Promise<Response> =>
+        new Response(null, { status }),
+    );
+    const context = harness({ fetch });
+
+    expect(await runCli(["status", "--json"], context.dependencies)).toBe(1);
+    expect(JSON.parse(context.stderr[0]).error).toMatchObject({ code: "api_error", status });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][1]?.redirect).toBe("manual");
+  }
 });
 
 test("returns a failure exit code and stable sanitized JSON error", async () => {

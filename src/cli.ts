@@ -262,7 +262,7 @@ function requireAssetId(value: string | undefined): string {
   return value;
 }
 
-function ownerHeaders(dependencies: CliDependencies, jsonBody = false): Headers {
+function ownerHeaders(dependencies: CliDependencies): Headers {
   const id = dependencies.env.CF_ACCESS_CLIENT_ID;
   const secret = dependencies.env.CF_ACCESS_CLIENT_SECRET;
   if (id === undefined || secret === undefined) {
@@ -276,8 +276,34 @@ function ownerHeaders(dependencies: CliDependencies, jsonBody = false): Headers 
     "CF-Access-Client-Secret": secret,
     "x-shlook-client": "1",
   });
-  if (jsonBody) headers.set("content-type", "application/json");
   return headers;
+}
+
+class AuthenticatedRedirectError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super("authenticated request was redirected");
+    this.status = status;
+  }
+}
+
+async function authenticatedFetch(
+  dependencies: CliDependencies,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  ownerHeaders(dependencies).forEach((value, name) => headers.set(name, value));
+  const response = await dependencies.fetch(url, {
+    ...init,
+    headers,
+    redirect: "manual",
+  });
+  if (response.status >= 300 && response.status < 400) {
+    throw new AuthenticatedRedirectError(response.status);
+  }
+  return response;
 }
 
 function configuredOrigin(value: string | undefined, name: string): string {
@@ -387,11 +413,23 @@ async function api(
   method = "GET",
   body?: unknown,
 ): Promise<unknown> {
-  const response = await dependencies.fetch(`${origin(dependencies)}${path}`, {
-    method,
-    headers: ownerHeaders(dependencies, body !== undefined),
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await authenticatedFetch(dependencies, `${origin(dependencies)}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (cause) {
+    if (cause instanceof AuthenticatedRedirectError) {
+      throw new CliError(
+        "api_error",
+        `API request failed with status ${cause.status}`,
+        cause.status,
+      );
+    }
+    throw cause;
+  }
   return responseData(response);
 }
 
@@ -484,19 +522,28 @@ async function connect(
   const owner = defaultOrigins(credential.domain).owner;
   let response: Response;
   try {
-    response = await dependencies.fetch(`${owner}/health`, {
-      method: "GET",
-      redirect: "manual",
-      headers: ownerHeaders({
+    response = await authenticatedFetch(
+      {
         ...dependencies,
         env: {
           CF_ACCESS_CLIENT_ID: credential.accessClientId,
           CF_ACCESS_CLIENT_SECRET: credential.accessClientSecret,
         },
-      }),
-    });
-  } catch {
-    throw new CliError("connection_verification_failed", "connection verification failed");
+      },
+      `${owner}/health`,
+      {
+        method: "GET",
+      },
+    );
+  } catch (cause) {
+    const status = cause instanceof AuthenticatedRedirectError ? cause.status : undefined;
+    throw new CliError(
+      "connection_verification_failed",
+      status === undefined
+        ? "connection verification failed"
+        : `connection verification failed with status ${status}`,
+      status,
+    );
   }
   if (!response.ok) {
     throw new CliError(
@@ -555,11 +602,12 @@ async function publish(
   let stage = "upload";
   try {
     for (const file of input.files) {
-      const response = await dependencies.fetch(
+      const response = await authenticatedFetch(
+        dependencies,
         `${origin(dependencies)}/api/assets/${id}/files/${encodedPath(file.path)}`,
         {
           method: "PUT",
-          headers: new Headers([...ownerHeaders(dependencies), ["content-type", file.contentType]]),
+          headers: { "content-type": file.contentType },
           body: file.bytes.buffer.slice(
             file.bytes.byteOffset,
             file.bytes.byteOffset + file.bytes.byteLength,
@@ -606,10 +654,23 @@ async function verify(dependencies: CliDependencies, rawId: string | undefined):
   };
   if (metadata.asset?.state !== "live")
     throw new CliError("verification_failed", "asset is not live");
-  const response = await dependencies.fetch(`${privateOrigin(dependencies)}/assets/${assetId}/`, {
-    method: "GET",
-    headers: ownerHeaders(dependencies),
-  });
+  let response: Response;
+  try {
+    response = await authenticatedFetch(
+      dependencies,
+      `${privateOrigin(dependencies)}/assets/${assetId}/`,
+      { method: "GET" },
+    );
+  } catch (cause) {
+    if (cause instanceof AuthenticatedRedirectError) {
+      throw new CliError(
+        "verification_failed",
+        `artifact returned status ${cause.status}`,
+        cause.status,
+      );
+    }
+    throw cause;
+  }
   if (!response.ok)
     throw new CliError(
       "verification_failed",

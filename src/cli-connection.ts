@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, parse as parsePath } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -9,6 +9,7 @@ const credentialKeys = ["domain", "accessClientId", "accessClientSecret"] as con
 const domainPattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/;
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
+const maximumCredentialFileBytes = 16_384;
 
 export interface ConnectionCredential {
   domain: string;
@@ -25,8 +26,24 @@ export interface ConnectionFileSystem {
   ): Promise<unknown>;
   rename(from: string, to: string): Promise<unknown>;
   chmod(path: string, mode: number): Promise<unknown>;
-  readFile(path: string, options: { encoding: "utf8"; flag: number }): Promise<string>;
+  open(path: string, flags: number): Promise<ConnectionFileHandle>;
   unlink(path: string): Promise<unknown>;
+}
+
+export interface ConnectionFileHandle {
+  stat(): Promise<{
+    isFile(): boolean;
+    uid: number;
+    mode: number;
+    size: number;
+  }>;
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
 }
 
 export interface ConnectionDependencies {
@@ -34,6 +51,7 @@ export interface ConnectionDependencies {
   home?: () => string;
   fs?: ConnectionFileSystem;
   randomId?: () => string;
+  currentUid?: () => number | undefined;
 }
 
 const defaultFileSystem: ConnectionFileSystem = {
@@ -41,7 +59,7 @@ const defaultFileSystem: ConnectionFileSystem = {
   writeFile,
   rename,
   chmod,
-  readFile,
+  open: async (path, flags) => open(path, flags),
   unlink,
 };
 
@@ -188,11 +206,38 @@ export async function loadConnectionCredential(
   try {
     const path = resolveConnectionAuthPath(dependencies);
     const fs = dependencies.fs ?? defaultFileSystem;
-    const json = await fs.readFile(path, {
-      encoding: "utf8",
-      flag: constants.O_RDONLY | constants.O_NOFOLLOW,
-    });
-    return validateCredential(JSON.parse(json));
+    const uid = (dependencies.currentUid ?? (() => process.getuid?.()))();
+    if (uid === undefined) throw new Error("current user is unavailable");
+    const handle = await fs.open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.uid !== uid ||
+        (stat.mode & 0o177) !== 0 ||
+        stat.size > maximumCredentialFileBytes
+      ) {
+        throw new Error("unsafe connection credential file");
+      }
+
+      const bytes = Buffer.alloc(maximumCredentialFileBytes + 1);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      if (offset > maximumCredentialFileBytes) {
+        throw new Error("connection credential file is too large");
+      }
+      const json = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, offset));
+      return validateCredential(JSON.parse(json));
+    } finally {
+      await handle.close();
+    }
   } catch {
     throw new Error("unable to load connection credential");
   }
