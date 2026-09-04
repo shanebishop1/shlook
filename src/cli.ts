@@ -14,6 +14,12 @@ import {
   type PublishInput,
   type SetupInspection,
 } from "./cli-files.ts";
+import {
+  decodeConnectionCredential,
+  loadConnectionCredential,
+  persistConnectionCredential,
+  type ConnectionCredential,
+} from "./cli-connection.ts";
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -28,6 +34,9 @@ export interface CliDependencies {
   runCommand: (command: string, args: string[], cwd: string) => Promise<{ code: number }>;
   stdout: (value: string) => void;
   stderr: (value: string) => void;
+  readSecretInput?: () => Promise<string>;
+  persistConnection?: (credential: ConnectionCredential) => Promise<string>;
+  loadConnection?: () => Promise<ConnectionCredential>;
   loadPublishInput?: (path: string, entrypoint?: string) => Promise<PublishInput>;
   parseArguments?: (argv: string[]) => { positionals: string[]; options: CliOptions };
   inspectSetup?: () => Promise<SetupInspection>;
@@ -71,6 +80,16 @@ function resolvePinnedWrangler(): string {
   return join(dirname(packagePath), "bin", "wrangler.js");
 }
 
+async function readSecretInput(): Promise<string> {
+  if (process.stdin.isTTY) throw new Error("connection credential input is required");
+  let value = "";
+  for await (const chunk of process.stdin) {
+    value += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (value.length > 20_000) throw new Error("connection credential input is invalid");
+  }
+  return value.trim();
+}
+
 function defaults(): CliDependencies {
   return {
     cwd: process.cwd(),
@@ -82,6 +101,7 @@ function defaults(): CliDependencies {
     runCommand: commandRunner,
     stdout: (value) => process.stdout.write(value),
     stderr: (value) => process.stderr.write(value),
+    readSecretInput,
   };
 }
 
@@ -102,9 +122,87 @@ function parse(argv: string[]): { positionals: string[]; options: CliOptions } {
       },
     });
     return { positionals, options: values };
-  } catch (cause) {
-    throw new CliError("usage_error", cause instanceof Error ? cause.message : "invalid arguments");
+  } catch {
+    throw new CliError("usage_error", "invalid arguments");
   }
+}
+
+const connectionEnvironmentKeys = [
+  "CF_ACCESS_CLIENT_ID",
+  "CF_ACCESS_CLIENT_SECRET",
+  "SHLOOK_DOMAIN",
+  "SHLOOK_API_ORIGIN",
+  "SHLOOK_PRIVATE_ORIGIN",
+  "SHLOOK_PUBLIC_ORIGIN",
+  "SHLOOK_SHARE_ORIGIN",
+] as const;
+
+function usesConnectionProfile(positionals: string[]): boolean {
+  const [command, operation] = positionals;
+  if (command === "auth") return operation === "check";
+  return [
+    "status",
+    "publish",
+    "list",
+    "show",
+    "visibility",
+    "secret",
+    "share",
+    "hard",
+    "delete",
+    "verify",
+  ].includes(command ?? "");
+}
+
+async function withConnectionProfile(dependencies: CliDependencies): Promise<CliDependencies> {
+  const hasEnvironmentProfile = connectionEnvironmentKeys.some(
+    (key) => dependencies.env[key] !== undefined,
+  );
+  if (hasEnvironmentProfile) {
+    const hasCredentials =
+      dependencies.env.CF_ACCESS_CLIENT_ID !== undefined &&
+      dependencies.env.CF_ACCESS_CLIENT_SECRET !== undefined;
+    if (!hasCredentials) {
+      throw new CliError(
+        "auth_required",
+        "CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required",
+      );
+    }
+    const hasDomain = dependencies.env.SHLOOK_DOMAIN !== undefined;
+    const hasAllOrigins = [
+      dependencies.env.SHLOOK_API_ORIGIN,
+      dependencies.env.SHLOOK_PRIVATE_ORIGIN,
+      dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+      dependencies.env.SHLOOK_SHARE_ORIGIN,
+    ].every((value) => value !== undefined);
+    if (!hasDomain && !hasAllOrigins) {
+      throw new CliError(
+        "configuration_required",
+        "SHLOOK_DOMAIN or all four shlook origins are required",
+      );
+    }
+    return dependencies;
+  }
+
+  let credential: ConnectionCredential;
+  try {
+    credential = await (dependencies.loadConnection?.() ??
+      loadConnectionCredential({ env: dependencies.env }));
+  } catch {
+    throw new CliError(
+      "auth_required",
+      "a complete environment profile or stored connection is required",
+    );
+  }
+  return {
+    ...dependencies,
+    env: {
+      ...dependencies.env,
+      SHLOOK_DOMAIN: credential.domain,
+      CF_ACCESS_CLIENT_ID: credential.accessClientId,
+      CF_ACCESS_CLIENT_SECRET: credential.accessClientSecret,
+    },
+  };
 }
 
 function requireAssetId(value: string | undefined): string {
@@ -299,6 +397,57 @@ async function setupApply(dependencies: CliDependencies): Promise<never> {
   );
 }
 
+async function connect(
+  dependencies: CliDependencies,
+  args: string[],
+): Promise<{ domain: string; path: string; connected: true }> {
+  if (args.length !== 0) {
+    throw new CliError("usage_error", "connect reads its credential from standard input");
+  }
+
+  let credential: ConnectionCredential;
+  try {
+    const token = await (dependencies.readSecretInput ?? readSecretInput)();
+    credential = decodeConnectionCredential(token);
+  } catch {
+    throw new CliError("invalid_connection_credential", "invalid connection credential");
+  }
+
+  const owner = defaultOrigins(credential.domain).owner;
+  let response: Response;
+  try {
+    response = await dependencies.fetch(`${owner}/health`, {
+      method: "GET",
+      redirect: "manual",
+      headers: ownerHeaders({
+        ...dependencies,
+        env: {
+          CF_ACCESS_CLIENT_ID: credential.accessClientId,
+          CF_ACCESS_CLIENT_SECRET: credential.accessClientSecret,
+        },
+      }),
+    });
+  } catch {
+    throw new CliError("connection_verification_failed", "connection verification failed");
+  }
+  if (!response.ok) {
+    throw new CliError(
+      "connection_verification_failed",
+      `connection verification failed with status ${response.status}`,
+      response.status,
+    );
+  }
+
+  let path: string;
+  try {
+    path = await (dependencies.persistConnection?.(credential) ??
+      persistConnectionCredential(credential, { env: dependencies.env }));
+  } catch {
+    throw new CliError("connection_persistence_failed", "unable to save connection credential");
+  }
+  return { domain: credential.domain, path, connected: true };
+}
+
 function encodedPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
@@ -409,6 +558,10 @@ async function dispatch(
 ): Promise<{ command: string; data: unknown; exitCode?: number; allowSecrets?: boolean }> {
   const [command, ...args] = positionals;
   if (command === undefined) throw new CliError("usage_error", "a command is required");
+  if (command === "connect") return { command, data: await connect(dependencies, args) };
+  if (usesConnectionProfile(positionals)) {
+    dependencies = await withConnectionProfile(dependencies);
+  }
   if (command === "auth" && args[0] === "check")
     return { command: "auth", data: await api(dependencies, "/health") };
   if (command === "setup") {
