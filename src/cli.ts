@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 import { normalizeAssetMetadata } from "./asset-metadata.ts";
 import { loadPublishInput, sanitizeCliValue, type PublishInput } from "./cli-files.ts";
 import {
+  assertConnectionCredentialStorageSupported,
   decodeConnectionCredential,
   loadConnectionCredential,
   persistConnectionCredential,
@@ -26,6 +27,7 @@ import {
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const maximumConnectionTokenBytes = 20_000;
+const maximumConnectionHealthBytes = 1_024;
 
 export interface ConnectionTokenInput {
   readonly isTTY?: boolean;
@@ -61,6 +63,7 @@ export interface CliDependencies {
   stdout: (value: string) => void;
   stderr: (value: string) => void;
   readSecretInput?: () => Promise<string>;
+  currentUid?: () => number | undefined;
   persistConnection?: (credential: ConnectionCredential) => Promise<string>;
   loadConnection?: () => Promise<ConnectionCredential>;
   loadPublishInput?: (path: string, entrypoint?: string) => Promise<PublishInput>;
@@ -268,6 +271,7 @@ function defaults(): CliDependencies {
     stdout: (value) => process.stdout.write(value),
     stderr: (value) => process.stderr.write(value),
     readSecretInput,
+    currentUid: () => process.getuid?.(),
   };
 }
 
@@ -599,7 +603,10 @@ function setupRuntimeDependencies(dependencies: CliDependencies) {
       dependencies.loadConnection?.() ?? loadConnectionCredential({ env: dependencies.env }),
     persistConnection: (credential: ConnectionCredential) =>
       dependencies.persistConnection?.(credential) ??
-      persistConnectionCredential(credential, { env: dependencies.env }),
+      persistConnectionCredential(credential, {
+        env: dependencies.env,
+        currentUid: dependencies.currentUid,
+      }),
   };
 }
 
@@ -648,6 +655,15 @@ async function connect(
     throw new CliError("usage_error", "connect reads its credential from standard input");
   }
 
+  try {
+    assertConnectionCredentialStorageSupported({ currentUid: dependencies.currentUid });
+  } catch {
+    throw new CliError(
+      "connection_persistence_failed",
+      "local connection credential storage is unavailable",
+    );
+  }
+
   let credential: ConnectionCredential;
   try {
     const token = await (dependencies.readSecretInput ?? readSecretInput)();
@@ -689,15 +705,79 @@ async function connect(
       response.status,
     );
   }
+  await verifyConnectionHealth(response);
 
   let path: string;
   try {
     path = await (dependencies.persistConnection?.(credential) ??
-      persistConnectionCredential(credential, { env: dependencies.env }));
+      persistConnectionCredential(credential, {
+        env: dependencies.env,
+        currentUid: dependencies.currentUid,
+      }));
   } catch {
     throw new CliError("connection_persistence_failed", "unable to save connection credential");
   }
   return { domain: credential.domain, path, connected: true };
+}
+
+async function verifyConnectionHealth(response: Response): Promise<void> {
+  try {
+    const contentType = (response.headers.get("content-type") ?? "")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    if (response.status === 204 || contentType !== "application/json" || response.body === null) {
+      throw new Error("invalid health response");
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > maximumConnectionHealthBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("health response is too large");
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error("invalid health response");
+    }
+    const keys = Object.keys(value);
+    const ok = Object.getOwnPropertyDescriptor(value, "ok");
+    const service = Object.getOwnPropertyDescriptor(value, "service");
+    if (
+      keys.length !== 2 ||
+      !keys.includes("ok") ||
+      !keys.includes("service") ||
+      ok === undefined ||
+      !("value" in ok) ||
+      ok.value !== true ||
+      service === undefined ||
+      !("value" in service) ||
+      service.value !== "shlook"
+    ) {
+      throw new Error("invalid health response");
+    }
+  } catch {
+    throw new CliError("connection_verification_failed", "connection verification failed");
+  }
 }
 
 function encodedPath(path: string): string {

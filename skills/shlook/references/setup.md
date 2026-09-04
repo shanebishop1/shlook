@@ -2,7 +2,12 @@
 
 Required runtime: Node.js 24 or later. Install the released CLI with
 `npm install --global shlook`. In a source checkout, run `pnpm build:cli` and use
-`./dist/cli.js`.
+`node ./dist/cli.js`.
+
+Local credential storage is supported only on POSIX platforms where Node.js exposes
+`process.getuid()` and owner-only file modes are enforced (for example, Linux and macOS). On
+other platforms, `connect` refuses to store credentials; use a complete environment profile
+instead.
 
 ## Package values and operator values
 

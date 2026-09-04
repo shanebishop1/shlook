@@ -131,6 +131,7 @@ test("atomically persists auth.json with owner-only permissions", async () => {
     home: () => "/ignored",
     fs,
     randomId: () => "fixed-id",
+    currentUid: () => 1_000,
   });
 
   expect(path).toBe("/config/shlook/auth.json");
@@ -140,6 +141,24 @@ test("atomically persists auth.json with owner-only permissions", async () => {
     "rename:/config/shlook/.auth.json.fixed-id:/config/shlook/auth.json",
     "chmod:/config/shlook/auth.json:600",
   ]);
+});
+
+test("rejects persistence before filesystem access when POSIX ownership is unavailable", async () => {
+  const { fs } = fileSystemHarness();
+
+  await expect(
+    persistConnectionCredential(credential, {
+      env: { XDG_CONFIG_HOME: "/config" },
+      fs,
+      randomId: () => "fixed-id",
+      currentUid: () => undefined,
+    }),
+  ).rejects.toThrow("unable to persist connection credential");
+
+  expect(fs.mkdir).not.toHaveBeenCalled();
+  expect(fs.writeFile).not.toHaveBeenCalled();
+  expect(fs.rename).not.toHaveBeenCalled();
+  expect(fs.chmod).not.toHaveBeenCalled();
 });
 
 test("loads and validates auth.json without prototype or secret-bearing errors", async () => {
@@ -198,6 +217,20 @@ test("loads and validates auth.json without prototype or secret-bearing errors",
       currentUid: () => 1_000,
     }),
   ).rejects.toThrow("unable to load connection credential");
+});
+
+test("rejects loading before filesystem access when POSIX ownership is unavailable", async () => {
+  const { fs } = fileSystemHarness();
+
+  await expect(
+    loadConnectionCredential({
+      env: { XDG_CONFIG_HOME: "/config" },
+      fs,
+      currentUid: () => undefined,
+    }),
+  ).rejects.toThrow("unable to load connection credential");
+
+  expect(fs.open).not.toHaveBeenCalled();
 });
 
 test("rejects real credential files with broad permissions or oversized contents", async () => {

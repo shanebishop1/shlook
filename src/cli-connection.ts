@@ -67,6 +67,16 @@ function invalidCredential(): Error {
   return new Error("invalid connection credential");
 }
 
+export function assertConnectionCredentialStorageSupported(
+  dependencies: Pick<ConnectionDependencies, "currentUid"> = {},
+): number {
+  const uid = (dependencies.currentUid ?? (() => process.getuid?.()))();
+  if (typeof uid !== "number" || !Number.isSafeInteger(uid) || uid < 0) {
+    throw new Error("local connection credential storage is unavailable");
+  }
+  return uid;
+}
+
 function ownDataString(value: object, key: string): string | undefined {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "string"
@@ -171,16 +181,21 @@ export async function persistConnectionCredential(
   value: ConnectionCredential,
   dependencies: ConnectionDependencies = {},
 ): Promise<string> {
-  const credential = validateCredential(value);
-  const path = resolveConnectionAuthPath(dependencies);
-  const fs = dependencies.fs ?? defaultFileSystem;
-  const randomId = (dependencies.randomId ?? randomUUID)();
-  if (!/^[A-Za-z0-9-]{1,64}$/.test(randomId))
-    throw new Error("unable to persist connection credential");
-  const directory = dirname(path);
-  const temporaryPath = join(directory, `.auth.json.${randomId}`);
+  let temporaryPath: string | undefined;
+  let fs: ConnectionFileSystem | undefined;
 
   try {
+    assertConnectionCredentialStorageSupported(dependencies);
+    const credential = validateCredential(value);
+    const path = resolveConnectionAuthPath(dependencies);
+    fs = dependencies.fs ?? defaultFileSystem;
+    const randomId = (dependencies.randomId ?? randomUUID)();
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(randomId)) {
+      throw new Error("invalid temporary credential path");
+    }
+    const directory = dirname(path);
+    temporaryPath = join(directory, `.auth.json.${randomId}`);
+
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
     await fs.writeFile(temporaryPath, `${credentialJson(credential)}\n`, {
       encoding: "utf8",
@@ -191,10 +206,12 @@ export async function persistConnectionCredential(
     await fs.chmod(path, 0o600);
     return path;
   } catch {
-    try {
-      await fs.unlink(temporaryPath);
-    } catch {
-      // The temporary file may not have been created or may already have been renamed.
+    if (fs !== undefined && temporaryPath !== undefined) {
+      try {
+        await fs.unlink(temporaryPath);
+      } catch {
+        // The temporary file may not have been created or may already have been renamed.
+      }
     }
     throw new Error("unable to persist connection credential");
   }
@@ -204,10 +221,9 @@ export async function loadConnectionCredential(
   dependencies: ConnectionDependencies = {},
 ): Promise<ConnectionCredential> {
   try {
+    const uid = assertConnectionCredentialStorageSupported(dependencies);
     const path = resolveConnectionAuthPath(dependencies);
     const fs = dependencies.fs ?? defaultFileSystem;
-    const uid = (dependencies.currentUid ?? (() => process.getuid?.()))();
-    if (uid === undefined) throw new Error("current user is unavailable");
     const handle = await fs.open(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,

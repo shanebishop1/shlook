@@ -169,6 +169,7 @@ function harness(overrides: Partial<CliDependencies> = {}) {
     runCommand: vi.fn(async () => ({ code: 0 })),
     stdout: (value) => stdout.push(value),
     stderr: (value) => stderr.push(value),
+    currentUid: () => 1_000,
     parseArguments: (argv) => {
       const positionals: string[] = [];
       const options: Record<string, boolean | string> = {};
@@ -291,7 +292,7 @@ test("connect verifies an injected token before persisting and emits only nonsec
   const readSecretInput = vi.fn(async () => token);
   const persistConnection = vi.fn(async () => "/config/shlook/auth.json");
   const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-    Response.json({ ok: true }),
+    Response.json({ ok: true, service: "shlook" }),
   );
   const context = harness({ env: {}, readSecretInput, persistConnection, fetch });
 
@@ -317,6 +318,66 @@ test("connect verifies an injected token before persisting and emits only nonsec
   expect(output).not.toContain(token);
   expect(output).not.toContain(storedCredential.accessClientId);
   expect(output).not.toContain(storedCredential.accessClientSecret);
+});
+
+test("connect rejects nonexact, empty, oversized, and invalid UTF-8 health bodies without persisting", async () => {
+  const token = encodeConnectionCredential(storedCredential);
+  const secretBody = "health-body-secret-must-not-leak";
+  const responses = [
+    Response.json({ ok: true }),
+    Response.json({ ok: true, service: "other" }),
+    Response.json({ ok: true, service: "shlook", extra: secretBody }),
+    new Response(null, { status: 204 }),
+    new Response("{not-json", { headers: { "content-type": "application/json" } }),
+    new Response(`${JSON.stringify({ ok: true, service: "shlook" })}${"x".repeat(65_536)}`, {
+      headers: { "content-type": "application/json" },
+    }),
+    new Response(Uint8Array.of(0xff), {
+      headers: { "content-type": "application/json" },
+    }),
+  ];
+
+  for (const response of responses) {
+    const persistConnection = vi.fn();
+    const context = harness({
+      env: {},
+      readSecretInput: vi.fn(async () => token),
+      persistConnection,
+      fetch: vi.fn(async () => response),
+    });
+
+    expect(await runCli(["connect", "--json"], context.dependencies)).toBe(1);
+    expect(persistConnection).not.toHaveBeenCalled();
+    expect(JSON.parse(context.stderr[0]).error).toEqual({
+      code: "connection_verification_failed",
+      message: "connection verification failed",
+    });
+    const output = context.stdout.join("") + context.stderr.join("");
+    expect(output).not.toContain(secretBody);
+    expect(output).not.toContain(storedCredential.accessClientSecret);
+  }
+});
+
+test("connect fails safely before credential handling when secure local storage is unsupported", async () => {
+  const readSecretInput = vi.fn(async () => encodeConnectionCredential(storedCredential));
+  const fetch = vi.fn(async () => Response.json({ ok: true, service: "shlook" }));
+  const persistConnection = vi.fn(async () => "/config/shlook/auth.json");
+  const context = harness({
+    env: {},
+    currentUid: () => undefined,
+    readSecretInput,
+    fetch,
+    persistConnection,
+  });
+
+  expect(await runCli(["connect", "--json"], context.dependencies)).toBe(1);
+  expect(readSecretInput).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(persistConnection).not.toHaveBeenCalled();
+  expect(JSON.parse(context.stderr[0]).error).toEqual({
+    code: "connection_persistence_failed",
+    message: "local connection credential storage is unavailable",
+  });
 });
 
 test("connect never persists failed verification or leaks the injected secret", async () => {
