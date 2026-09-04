@@ -62,7 +62,7 @@ jobs:
         id: pack
         run: |
           npm pack --dry-run --json --ignore-scripts > "$RUNNER_TEMP/pack-dry-run.json"
-          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
+          npm pack --json --ignore-scripts --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
           filename="$(node -p 'require(process.argv[1])[0].filename' "$RUNNER_TEMP/pack.json")"
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
 
