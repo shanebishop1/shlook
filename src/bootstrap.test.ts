@@ -174,9 +174,11 @@ describe("worker bootstrap", () => {
     expect(body).toContain("event.target===confirmation");
     expect(body).toContain("@media(min-width:901px){.large-preview{min-height:0}");
     expect(body).toContain(".large-preview .preview-image{position:absolute;inset:0}");
-    expect(body).toContain("@media(max-width:900px){.large-preview{height:250px;min-height:250px}");
+    expect(body).toContain(".large-preview{height:250px;min-height:250px}");
     expect(body).toContain('href="https://github.com/shanebishop1/shlook"');
     expect(body).toContain('aria-label="shlook on GitHub"');
+    expect(body).toContain('href="https://owner.example.com/" aria-label="shlook home"');
+    expect(body).toContain("localStorage.getItem('shlook-theme')");
     expect(body).toContain("Shane Bishop");
     expect(body).toContain("2026");
     expect(body).toContain(`data-local-time datetime="${now}"`);
@@ -237,6 +239,11 @@ describe("worker bootstrap", () => {
     expect(body).toContain("uploadInput.value=''");
     expect(body).toContain("uploadForm.dataset.step='file'");
     expect(body).toContain("event.stopPropagation()");
+    expect(body).toContain("data-select-toggle>Edit</button>");
+    expect(body).toContain('data-batch-delete aria-label="Delete selected artifacts"');
+    expect(body).toContain('data-select-item type="checkbox"');
+    expect(body).toContain("const setSelectMode=enabled=>");
+    expect(body).toContain("Promise.all(items.map(item=>ownerRequest('/api/assets/'");
     expect(body).toContain(".upload-result-url{overflow-wrap:anywhere;word-break:break-word");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
@@ -245,7 +252,7 @@ describe("worker bootstrap", () => {
     expect(body).not.toContain(">Copy link</button>");
     expect(body).not.toContain("Latest transmission");
     expect(body).not.toContain("No live artifacts in the ledger.");
-    const script = body.match(/<script nonce="[^"]+">([\s\S]+)<\/script>/)?.[1];
+    const script = [...body.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)].at(-1)?.[1];
     expect(script).toBeDefined();
     expect(() => new Function(script ?? "")).not.toThrow();
   });

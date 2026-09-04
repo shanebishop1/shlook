@@ -191,9 +191,12 @@ const uploadDescription=uploadForm.querySelector('[data-upload-description]');
 const uploadSubmit=uploadForm.querySelector('[data-upload-submit]');
 const uploadStatus=uploadForm.querySelector('[data-upload-status]');
 const uploadResult=uploadForm.querySelector('[data-upload-result]');
-const uploadResultUrl=uploadForm.querySelector('[data-upload-result-url]');
-let selectedUploadFile;
-let uploadBusy=false;
+ const uploadResultUrl=uploadForm.querySelector('[data-upload-result-url]');
+ const selectToggle=document.querySelector('[data-select-toggle]');
+ const batchDelete=document.querySelector('[data-batch-delete]');
+ let selectedUploadFile;
+ let uploadBusy=false;
+ let selectMode=false;
 let toastTimer;
 const labels={private:'Private',secret_link:'Secret link',public:'Public'};
 const errorMessage=code=>code==='not_found'?'Artifact no longer exists. Refreshing...':code==='secret_required'?'Issue a secret link before selecting Secret link.':code==='asset_not_live'?'This artifact is no longer active.':code==='secret_encryption_unavailable'?'Secret-link encryption is not configured.':code.replace(/_/g,' ');
@@ -207,7 +210,10 @@ const openUpload=()=>{uploadDialog.hidden=false;document.body.classList.add('upl
  const resetUpload=()=>{selectedUploadFile=undefined;uploadInput.value='';uploadName.value='';uploadName.placeholder='';delete uploadName.dataset.fallback;uploadDescription.value='';uploadForm.dataset.step='file';dropZone.hidden=false;dropZone.style.display='';uploadConfig.hidden=true;uploadResult.hidden=true;uploadSubmit.disabled=true;uploadForm.querySelector('[name="upload-visibility"][value="private"]').checked=true;setUploadStatus('')};
  const closeUpload=()=>{if(uploadBusy)return;resetUpload();uploadDialog.hidden=true;document.body.classList.remove('upload-modal-open');uploadOpen.setAttribute('aria-expanded','false');uploadOpen.focus()};
 const trapDialogFocus=(dialog,event)=>{if(event.key!=='Tab')return;const focusable=[...dialog.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary,a[href]')].filter(element=>element.offsetParent!==null);if(focusable.length===0)return;const first=focusable[0];const last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}};
-const closeConfirmation=confirmation=>{confirmation.hidden=true;document.body.classList.remove('confirm-open');document.querySelector('[data-detail="'+confirmation.dataset.confirmFor+'"] [data-request-delete]').focus()};
+ const closeConfirmation=confirmation=>{confirmation.hidden=true;document.body.classList.remove('confirm-open');document.querySelector('[data-detail="'+confirmation.dataset.confirmFor+'"] [data-request-delete]').focus()};
+ const selectedItems=()=>[...document.querySelectorAll('[data-select-item]:checked')];
+ const syncSelection=()=>{const selected=selectedItems();batchDelete.hidden=!selectMode||selected.length===0;batchDelete.disabled=selected.length===0};
+ const setSelectMode=enabled=>{selectMode=enabled;document.body.classList.toggle('selection-mode',enabled);selectToggle.textContent=enabled?'Done':'Edit';if(!enabled)document.querySelectorAll('[data-select-item]').forEach(item=>{item.checked=false});syncSelection()};
 const uploadVisibility=()=>uploadForm.querySelector('[name="upload-visibility"]:checked').value;
 const chooseUploadFile=file=>{if(!file)return;selectedUploadFile=file;const base=(file.name.replace(/\\.[^.]+$/,'').trim()||file.name||'Upload').slice(0,80);uploadName.value='';uploadName.dataset.fallback=base;uploadName.placeholder=base;uploadForm.dataset.step='options';dropZone.hidden=true;dropZone.style.display='none';uploadConfig.hidden=false;uploadSubmit.disabled=false;uploadResult.hidden=true;setUploadStatus('');requestAnimationFrame(()=>uploadConfig.querySelector('h2').focus())};
 const cardForId=id=>document.querySelector('[data-detail="'+id+'"]');
@@ -224,8 +230,10 @@ const toggle=(row)=>{const detail=cardForId(row.dataset.record);const open=!row.
 const setTheme=theme=>{document.documentElement.dataset.theme=theme;const dark=theme==='dark';document.querySelector('[data-theme-toggle]').setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');try{localStorage.setItem('shlook-theme',theme)}catch{}};
 let initialTheme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';try{initialTheme=localStorage.getItem('shlook-theme')||initialTheme}catch{}setTheme(initialTheme);
 document.querySelector('[data-theme-toggle]').addEventListener('click',()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
-uploadOpen.addEventListener('click',openUpload);
-uploadClose.addEventListener('click',closeUpload);
+ uploadOpen.addEventListener('click',openUpload);
+ uploadClose.addEventListener('click',closeUpload);
+ selectToggle.addEventListener('click',()=>setSelectMode(!selectMode));
+ batchDelete.addEventListener('click',async()=>{const items=selectedItems();if(items.length===0||!confirm('Delete '+items.length+' selected '+(items.length===1?'artifact':'artifacts')+' permanently?'))return;batchDelete.disabled=true;try{await Promise.all(items.map(item=>ownerRequest('/api/assets/'+item.closest('[data-record]').dataset.record,{method:'DELETE'})));location.reload()}catch(error){setStatus(null,error instanceof Error?error.message:'Batch delete failed.',true);batchDelete.disabled=false}});
  uploadDialog.addEventListener('click',event=>{event.stopPropagation()});
 uploadDialog.addEventListener('keydown',event=>trapDialogFocus(uploadDialog,event));
 document.querySelectorAll('[data-confirm]').forEach(confirmation=>confirmation.addEventListener('keydown',event=>trapDialogFocus(confirmation,event)));
@@ -235,7 +243,9 @@ const localDate=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',y
 const localTime=new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
 document.querySelectorAll('[data-local-time]').forEach(element=>{const date=new Date(element.dateTime);if(Number.isNaN(date.getTime()))return;const zone=document.createElement('span');zone.className='meta-sub';zone.textContent=localTime.format(date);element.textContent=localDate.format(date);element.append(zone)});
 uploadInput.addEventListener('change',()=>chooseUploadFile(uploadInput.files&&uploadInput.files[0]));
-const dropZone=uploadForm.querySelector('[data-drop-zone]');
+ const dropZone=uploadForm.querySelector('[data-drop-zone]');
+ document.querySelectorAll('[data-select-item]').forEach(item=>item.addEventListener('change',syncSelection));
+ document.addEventListener('click',event=>{if(!selectMode)return;const row=event.target.closest('[data-record]');if(!row||event.target.closest('a,button,input'))return;const item=row.querySelector('[data-select-item]');item.checked=!item.checked;syncSelection();event.preventDefault();event.stopImmediatePropagation()},true);
 ['dragenter','dragover'].forEach(type=>dropZone.addEventListener(type,event=>{event.preventDefault();dropZone.classList.add('is-dragging')}));
 dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('is-dragging'));
 dropZone.addEventListener('drop',event=>{event.preventDefault();dropZone.classList.remove('is-dragging');chooseUploadFile(event.dataTransfer&&event.dataTransfer.files[0])});
@@ -287,7 +297,7 @@ function archiveRefinementStyles(): string {
 }
 
 function detailPreviewStyles(): string {
-  return `@media(max-width:900px){.large-preview{height:250px;min-height:250px}.large-preview .preview-media{height:250px;min-height:250px}.large-preview .preview-image{position:absolute;inset:0}}`;
+  return `.selection-actions{display:flex;align-items:center;gap:8px;order:2}.selection-actions .icon-button{width:34px;height:34px;padding:0;display:grid;place-items:center}.selection-actions svg{width:16px}.select-item{display:none;width:17px;height:17px;margin:0;accent-color:var(--accent)}body.selection-mode .select-item{display:block}body.selection-mode .preview-button,body.selection-mode .artifact-link,body.selection-mode .visibility-select,body.selection-mode .row-action{pointer-events:none;opacity:.5}@media(min-width:901px){.large-preview{min-height:0}.large-preview .preview-media{min-height:0}.large-preview .preview-image{position:absolute;inset:0}}@media(max-width:900px){.selection-actions{order:0}.large-preview{height:250px;min-height:250px}.large-preview .preview-media{height:250px;min-height:250px}.large-preview .preview-image{position:absolute;inset:0}}`;
 }
 
 export async function ownerPage(
@@ -299,6 +309,7 @@ export async function ownerPage(
   secretEncryptionKey?: string,
 ): Promise<Response> {
   const url = new URL(request.url);
+  const ownerOrigin = url.origin;
   const offset = Number(url.searchParams.get("offset") ?? 0);
   if (!Number.isSafeInteger(offset) || offset < 0) {
     return Response.json({ error: "invalid_offset" }, { status: 400 });
@@ -366,7 +377,26 @@ export async function ownerPage(
   <section class="ledger" aria-label="Artifact archive"><table><thead><tr><th>Preview</th><th>Artifact</th><th>Visibility</th><th>Share expiration</th><th>Artifact expiration</th><th>Updated</th><th><span class="sr-only">Inspect</span></th></tr></thead><tbody>${rows}</tbody></table><div class="empty" data-empty${assets.length === 0 ? "" : " hidden"}>No live artifacts match this view.</div></section><nav class="pagination" aria-label="Archive pages">${previous}${next}</nav></main>
   <footer class="owner-footer"><a href="https://github.com/shanebishop1/shlook" target="_blank" rel="noopener noreferrer" aria-label="shlook on GitHub">${githubIcon()}</a><span>Shane Bishop <span aria-hidden="true">|</span> 2026</span></footer>
   <div class="toast" data-toast role="status" aria-live="polite"></div><script nonce="${nonce}">${script()}</script></body></html>`;
-  return new Response(body, {
+  const renderedBody = body
+    .replace(
+      "</head>",
+      `<script nonce="${nonce}">try{const saved=localStorage.getItem('shlook-theme');document.documentElement.dataset.theme=saved|| (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch{document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}</script></head>`,
+    )
+    .replace(
+      '<span class="brand">',
+      `<a class="brand" href="${escapeHtml(ownerOrigin)}/" aria-label="shlook home">`,
+    )
+    .replace('</span></div><div class="header-actions">', '</a></div><div class="header-actions">')
+    .replace(
+      '<div class="toolbar" aria-label="Archive controls">',
+      '<div class="toolbar" aria-label="Archive controls"><div class="selection-actions" data-selection-actions><button class="button" type="button" data-select-toggle>Edit</button><button class="button danger icon-button" type="button" data-batch-delete aria-label="Delete selected artifacts" hidden>${trashIcon()}</button></div>',
+    )
+    .replaceAll(
+      '<td class="preview-cell"><button',
+      '<td class="preview-cell"><input class="select-item" data-select-item type="checkbox" aria-label="Select artifact"><button',
+    )
+    .replace("${trashIcon()}", trashIcon());
+  return new Response(renderedBody, {
     headers: {
       "cache-control": "private, no-store",
       "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
