@@ -42,6 +42,26 @@ function page(result: unknown[], pageNumber = 1, totalPages = 1): Response {
   });
 }
 
+function contractPage(
+  result: unknown[],
+  pageNumber: number,
+  perPage: number,
+  totalCount: number,
+): Response {
+  return Response.json({
+    success: true,
+    errors: [],
+    messages: [],
+    result,
+    result_info: {
+      page: pageNumber,
+      per_page: perPage,
+      count: result.length,
+      total_count: totalCount,
+    },
+  });
+}
+
 function baseResponse(url: URL): Response {
   if (url.pathname === "/client/v4/user/tokens/verify") return envelope({ status: "active" });
   if (url.pathname === "/client/v4/memberships") {
@@ -286,13 +306,23 @@ test("selects the exact accepted account and exact active zone", async () => {
   );
 });
 
-test("paginates accepted memberships only when selection requires it", async () => {
+test("paginates contract-shaped responses without total_pages", async () => {
   const context = harness(({ url }) => {
     if (url.pathname === "/client/v4/memberships") {
       const current = Number(url.searchParams.get("page"));
       return current === 1
-        ? page([], 1, 2)
-        : page([{ status: "accepted", account: { id: ACCOUNT_ID, name: "Second page" } }], 2, 2);
+        ? contractPage(
+            [{ status: "pending", account: { id: OTHER_ACCOUNT_ID, name: "Pending" } }],
+            1,
+            1,
+            2,
+          )
+        : contractPage(
+            [{ status: "accepted", account: { id: ACCOUNT_ID, name: "Second page" } }],
+            2,
+            1,
+            2,
+          );
     }
     return baseResponse(url);
   });
@@ -300,6 +330,35 @@ test("paginates accepted memberships only when selection requires it", async () 
   expect(
     context.requests.filter((request) => request.url.pathname.endsWith("/memberships")),
   ).toHaveLength(2);
+});
+
+test("paginates Workers domains using full-page and short-page semantics", async () => {
+  const context = harness(({ url }) => {
+    if (url.pathname.endsWith("/workers/domains")) {
+      const current = Number(url.searchParams.get("page"));
+      return current === 1
+        ? envelope(
+            Array.from({ length: 100 }, (_, index) => ({
+              id: `unrelated-${index}`,
+              hostname: `unrelated-${index}.example.com`,
+              zone_id: ZONE_ID,
+            })),
+          )
+        : envelope([{ id: "owner-domain-id", hostname: "shlook.example.com", zone_id: ZONE_ID }]);
+    }
+    return baseResponse(url);
+  });
+
+  await planSetup(input, context.dependencies);
+
+  const requests = context.requests.filter((request) =>
+    request.url.pathname.endsWith("/workers/domains"),
+  );
+  expect(requests).toHaveLength(2);
+  expect(requests.map((request) => request.url.searchParams.get("page"))).toEqual(["1", "2"]);
+  expect(requests.every((request) => request.url.searchParams.get("per_page") === "100")).toBe(
+    true,
+  );
 });
 
 function existingStateResponse(url: URL): Response {
@@ -323,7 +382,15 @@ function existingStateResponse(url: URL): Response {
   }
   if (url.pathname.endsWith("/access/apps")) return page([ownerApp, privateApp]);
   if (url.pathname.endsWith("/access/service_tokens")) {
-    return page([{ id: "token-id", name: "shlook", client_id: "client-id", enabled: true }]);
+    return page([
+      {
+        id: "token-id",
+        name: "shlook",
+        client_id: "client-id",
+        enabled: true,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
   }
   if (url.pathname.endsWith("/access/apps/owner-app-id/policies")) {
     return page([
@@ -386,6 +453,118 @@ test("reuses exact existing resources and policies without mutation", async () =
   expect(serialized).not.toContain("known-secret");
 });
 
+test.each([
+  {
+    label: "another Service Auth policy",
+    surface: "owner",
+    policy: {
+      id: "other-machine-policy-id",
+      name: "other-machine",
+      decision: "non_identity",
+      include: [{ service_token: { token_id: "other-token-id" } }],
+    },
+  },
+  {
+    label: "an any-valid-service-token policy",
+    surface: "owner",
+    policy: {
+      id: "any-token-policy-id",
+      name: "any-token",
+      decision: "allow",
+      include: [{ any_valid_service_token: {} }],
+    },
+  },
+  {
+    label: "a bypass policy",
+    surface: "private",
+    policy: {
+      id: "bypass-policy-id",
+      name: "bypass-machines",
+      decision: "bypass",
+      include: [{ everyone: {} }],
+    },
+  },
+])("fails closed when a reused Access app has $label", async ({ policy, surface }) => {
+  const context = harness(({ url }) => {
+    if (url.pathname.endsWith(`/access/apps/${surface}-app-id/policies`)) {
+      return page([
+        {
+          id: `${surface}-email-policy-id`,
+          name: "shlook-owner-email",
+          decision: "allow",
+          include: [{ email: { email: "owner@example.com" } }],
+        },
+        {
+          id: `${surface}-token-policy-id`,
+          name: "shlook-service-token",
+          decision: "non_identity",
+          include: [{ service_token: { token_id: "token-id" } }],
+        },
+        policy,
+      ]);
+    }
+    return existingStateResponse(url);
+  });
+
+  const error = await capturedError(planSetup(input, context.dependencies));
+
+  expect(error).toMatchObject({
+    code: "setup_resource_conflict",
+    message: "an existing Cloudflare resource conflicts with the required shlook setup",
+  });
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+test("rejects expired service tokens and blocks near-expiry tokens without creating duplicates", async () => {
+  const tokenResponse = (expiresAt: string) =>
+    harness(({ url }) => {
+      if (url.pathname.endsWith("/access/service_tokens")) {
+        return page([
+          {
+            id: "token-id",
+            name: "shlook",
+            client_id: "client-id",
+            enabled: true,
+            expires_at: expiresAt,
+          },
+        ]);
+      }
+      return existingStateResponse(url);
+    });
+
+  const expired = tokenResponse("2000-01-01T00:00:00.000Z");
+  expect((await capturedError(planSetup(input, expired.dependencies))).code).toBe(
+    "setup_resource_conflict",
+  );
+  expect(expired.requests.every((request) => request.method === "GET")).toBe(true);
+
+  const nearExpiry = tokenResponse(new Date(Date.now() + 60 * 60 * 1000).toISOString());
+  const plan = await planSetup(input, nearExpiry.dependencies);
+  expect(plan.ready).toBe(false);
+  expect(plan.actions).toContainEqual({
+    resource: "access_service_token",
+    operation: "blocked",
+    name: "shlook",
+    id: "token-id",
+    reason: "service_token_expiring",
+  });
+
+  const applyError = await capturedError(
+    applySetup(
+      {
+        ...input,
+        existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+      },
+      nearExpiry.dependencies,
+    ),
+  );
+  expect(applyError.code).toBe("setup_capabilities_unavailable");
+  expect(nearExpiry.requests.every((request) => request.method === "GET")).toBe(true);
+  expect(
+    nearExpiry.requests.filter((request) => request.url.pathname.endsWith("/service_tokens")),
+  ).toHaveLength(2);
+});
+
 test("refuses an existing named service token without a recoverable secret before mutation", async () => {
   const context = harness(({ url }) => existingStateResponse(url));
   const error = await capturedError(applySetup(input, context.dependencies));
@@ -413,7 +592,7 @@ test("creates resources in order and applies exact email and service-token polic
       return envelope({ ...app, id: `${app.name}-id` }, { status: 201 });
     }
     if (url.pathname.endsWith("/access/service_tokens")) {
-      expect(body).toEqual({ name: "shlook" });
+      expect(body).toEqual({ name: "shlook", duration: "2160h" });
       return envelope(
         {
           id: "token-id",

@@ -3,6 +3,10 @@ const API_PREFIX = "/client/v4";
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_PAGES = 100;
 const PAGE_SIZE = 100;
+// Service tokens are deliberately short-lived: 2160 hours is 90 days.
+const SERVICE_TOKEN_DURATION = "2160h";
+// Block automatic reuse during the final week so rotation can be handled explicitly.
+const SERVICE_TOKEN_NEAR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const CLOUDFLARE_SETUP_NAMES = {
   d1: "shlook",
@@ -91,7 +95,7 @@ export interface SetupAction {
   surface?: SetupSurface;
   hostname?: string;
   hostnames?: string[];
-  reason?: "capability_unavailable" | "controller_owned";
+  reason?: "capability_unavailable" | "controller_owned" | "service_token_expiring";
 }
 
 export interface SetupPlan {
@@ -233,6 +237,7 @@ interface ServiceTokenRecord {
   client_id?: unknown;
   client_secret?: unknown;
   enabled?: unknown;
+  expires_at?: unknown;
 }
 
 interface AccessPolicyRecord {
@@ -263,7 +268,14 @@ interface ExistingState {
       }
     >
   >;
-  accessServiceToken?: { id: string; name: string; clientId: string; enabled: boolean };
+  accessServiceToken?: {
+    id: string;
+    name: string;
+    clientId: string;
+    enabled: boolean;
+    expiresAt: string;
+    nearExpiry: boolean;
+  };
   workersDomains: Array<{ id: string; hostname: string }>;
 }
 
@@ -583,16 +595,58 @@ function objectResult(envelope: ApiEnvelope): Record<string, unknown> {
   return envelope.result;
 }
 
-function totalPages(envelope: ApiEnvelope, currentPage: number): number {
-  const raw = envelope.result_info?.total_pages;
-  if (raw === undefined) return currentPage;
-  if (!Number.isSafeInteger(raw) || (raw as number) < currentPage || (raw as number) > MAX_PAGES) {
-    throw new CloudflareSetupError(
-      "cloudflare_pagination_invalid",
-      "Cloudflare API returned invalid pagination data",
-    );
+function invalidPagination(): never {
+  throw new CloudflareSetupError(
+    "cloudflare_pagination_invalid",
+    "Cloudflare API returned invalid pagination data",
+  );
+}
+
+function optionalPageNumber(
+  resultInfo: Record<string, unknown>,
+  field: string,
+  minimum: number,
+): number | undefined {
+  const value = resultInfo[field];
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) invalidPagination();
+  return value as number;
+}
+
+function hasNextPage(
+  envelope: ApiEnvelope,
+  currentPage: number,
+  pageItemCount: number,
+  accumulatedItemCount: number,
+): boolean {
+  const resultInfo = envelope.result_info;
+  if (resultInfo === undefined) return pageItemCount === PAGE_SIZE;
+
+  const reportedPage = optionalPageNumber(resultInfo, "page", 1);
+  const perPage = optionalPageNumber(resultInfo, "per_page", 1);
+  const count = optionalPageNumber(resultInfo, "count", 0);
+  const totalCount = optionalPageNumber(resultInfo, "total_count", 0);
+  const totalPages = optionalPageNumber(resultInfo, "total_pages", 0);
+  if (reportedPage !== undefined && reportedPage !== currentPage) invalidPagination();
+  if (count !== undefined && count !== pageItemCount) invalidPagination();
+
+  if (totalPages !== undefined) {
+    if (
+      totalPages > MAX_PAGES ||
+      (totalPages === 0 ? currentPage !== 1 || pageItemCount !== 0 : totalPages < currentPage)
+    ) {
+      invalidPagination();
+    }
+    return currentPage < totalPages;
   }
-  return raw as number;
+
+  if (totalCount !== undefined) {
+    if (accumulatedItemCount > totalCount) invalidPagination();
+    if (accumulatedItemCount >= totalCount) return false;
+  }
+
+  const effectivePerPage = perPage ?? PAGE_SIZE;
+  return pageItemCount >= effectivePerPage;
 }
 
 async function pagedArray(
@@ -609,9 +663,11 @@ async function pagedArray(
       per_page: String(PAGE_SIZE),
     });
     const envelope = await client.request(`${path}?${query.toString()}`);
-    items.push(...arrayResult(envelope));
+    const pageItems = arrayResult(envelope);
+    items.push(...pageItems);
+    const morePages = hasNextPage(envelope, currentPage, pageItems.length, items.length);
     if (stop?.(items)) return items;
-    if (currentPage >= totalPages(envelope, currentPage)) return items;
+    if (!morePages) return items;
   }
   throw new CloudflareSetupError(
     "cloudflare_pagination_invalid",
@@ -906,15 +962,20 @@ async function inspectServiceToken(client: CloudflareApiClient, accountId: strin
   if (
     !nonemptyString(selected.id) ||
     !nonemptyString(selected.client_id) ||
-    selected.enabled === false
+    selected.enabled === false ||
+    !nonemptyString(selected.expires_at)
   ) {
     resourceConflict();
   }
+  const expiresAt = Date.parse(selected.expires_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) resourceConflict();
   return {
     id: selected.id,
     name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
     clientId: selected.client_id,
     enabled: true,
+    expiresAt: selected.expires_at,
+    nearExpiry: expiresAt <= Date.now() + SERVICE_TOKEN_NEAR_EXPIRY_MS,
   };
 }
 
@@ -924,10 +985,9 @@ async function inspectWorkersDomains(
   zoneId: string,
   origins: SetupOrigins,
 ) {
-  const query = new URLSearchParams({ zone_id: zoneId });
-  const records = arrayResult(
-    await client.request(`/accounts/${accountId}/workers/domains?${query.toString()}`),
-  );
+  const records = await pagedArray(client, `/accounts/${accountId}/workers/domains`, {
+    zone_id: zoneId,
+  });
   const expected = new Set(Object.values(origins).map((origin) => new URL(origin).hostname));
   return records
     .filter(
@@ -971,6 +1031,35 @@ function exactTokenPolicy(value: AccessPolicyRecord, tokenId: string): boolean {
   );
 }
 
+function containsAnyValidServiceToken(value: AccessPolicyRecord): boolean {
+  return [value.include, value.exclude, value.require].some(
+    (rules) =>
+      Array.isArray(rules) &&
+      rules.some((rule) => isRecord(rule) && "any_valid_service_token" in rule),
+  );
+}
+
+function validateMachineAuthorizationPolicies(
+  items: unknown[],
+  expectedName: string,
+  tokenId?: string,
+): void {
+  for (const item of items) {
+    if (!isRecord(item)) continue;
+    const policy = item as AccessPolicyRecord;
+    if (policy.decision === "bypass" || containsAnyValidServiceToken(policy)) resourceConflict();
+    if (
+      policy.decision === "non_identity" &&
+      (tokenId === undefined ||
+        policy.name !== expectedName ||
+        !nonemptyString(policy.id) ||
+        !exactTokenPolicy(policy, tokenId))
+    ) {
+      resourceConflict();
+    }
+  }
+}
+
 function selectPolicy(
   items: unknown[],
   name: string,
@@ -998,6 +1087,11 @@ async function inspectPolicies(
     client,
     `/accounts/${accountId}/access/apps/${encodeURIComponent(appId)}/policies`,
     {},
+  );
+  validateMachineAuthorizationPolicies(
+    items,
+    CLOUDFLARE_SETUP_NAMES.accessPolicies.serviceToken,
+    tokenId,
   );
   const emailPolicy = selectPolicy(items, CLOUDFLARE_SETUP_NAMES.accessPolicies.email, (policy) =>
     exactEmailPolicy(policy, email),
@@ -1123,12 +1217,20 @@ async function inspectSetup(
     });
   }
   actions.push(
-    resourceAction(
-      "access_service_token",
-      CLOUDFLARE_SETUP_NAMES.accessServiceToken,
-      capabilities.accessServiceTokens,
-      state.accessServiceToken,
-    ),
+    state.accessServiceToken?.nearExpiry === true
+      ? {
+          resource: "access_service_token",
+          operation: "blocked",
+          name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+          id: state.accessServiceToken.id,
+          reason: "service_token_expiring",
+        }
+      : resourceAction(
+          "access_service_token",
+          CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+          capabilities.accessServiceTokens,
+          state.accessServiceToken,
+        ),
   );
   for (const surface of ["owner", "private"] as const) {
     const policies = state.accessPolicies[surface];
@@ -1160,7 +1262,9 @@ async function inspectSetup(
     state,
     plan: {
       mode: "plan",
-      ready: Object.values(capabilities).every((capability) => capability.status === "available"),
+      ready:
+        Object.values(capabilities).every((capability) => capability.status === "available") &&
+        actions.every((action) => action.operation !== "blocked"),
       account,
       zone,
       origins: normalized.origins,
@@ -1251,6 +1355,7 @@ async function createServiceToken(
   const result = objectResult(
     await client.request(`/accounts/${accountId}/access/service_tokens`, "POST", {
       name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+      duration: SERVICE_TOKEN_DURATION,
     }),
   );
   if (
@@ -1361,7 +1466,12 @@ export async function applySetup(
     accessServiceToken = created.resource;
     createdServiceTokenCredentials = created.credentials;
   } else {
-    accessServiceToken = { ...state.accessServiceToken, created: false };
+    accessServiceToken = {
+      id: state.accessServiceToken.id,
+      name: state.accessServiceToken.name,
+      clientId: state.accessServiceToken.clientId,
+      created: false,
+    };
   }
 
   const accessPolicies = {} as ApplySetupResult["resources"]["accessPolicies"];
