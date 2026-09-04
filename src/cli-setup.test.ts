@@ -9,6 +9,7 @@ import {
   type CloudflareSetupDependencies,
   type SetupDeploymentManifest,
   type SetupPersistence,
+  type SetupResourceKey,
 } from "./cli-setup.ts";
 
 const ACCOUNT_ID = "a".repeat(32);
@@ -84,7 +85,7 @@ function baseResponse(url: URL): Response {
   if (url.pathname.endsWith("/r2/buckets")) return envelope({ buckets: [] });
   if (url.pathname.endsWith("/access/apps")) return page([]);
   if (url.pathname.endsWith("/access/service_tokens")) return page([]);
-  if (url.pathname.endsWith("/workers/services")) return page([]);
+  if (url.pathname.endsWith("/workers/services/shlook")) return new Response(null, { status: 404 });
   if (url.pathname.endsWith("/workers/domains")) return envelope([]);
   throw new Error(`unhandled test request: ${url.pathname}`);
 }
@@ -115,6 +116,7 @@ function persistence(overrides: Partial<SetupPersistence> = {}): SetupPersistenc
   return {
     saveIntent: vi.fn(async () => undefined),
     saveResource: vi.fn(async () => undefined),
+    beginServiceTokenRotation: vi.fn(async () => undefined),
     saveServiceToken: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -240,7 +242,7 @@ test("plan verifies identity, probes every read surface, and never mutates", asy
       `/client/v4/accounts/${ACCOUNT_ID}/r2/buckets`,
       `/client/v4/accounts/${ACCOUNT_ID}/access/apps`,
       `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens`,
-      `/client/v4/accounts/${ACCOUNT_ID}/workers/services`,
+      `/client/v4/accounts/${ACCOUNT_ID}/workers/services/shlook`,
       `/client/v4/accounts/${ACCOUNT_ID}/workers/domains`,
     ]),
   );
@@ -346,26 +348,19 @@ test("paginates contract-shaped responses without total_pages", async () => {
   ).toHaveLength(2);
 });
 
-test("paginates Workers domains using full-page and short-page semantics", async () => {
+test("uses documented point queries for Workers discovery and treats only service 404 as absence", async () => {
   const context = harness(({ url }) => {
     if (url.pathname.endsWith("/workers/domains")) {
-      const current = Number(url.searchParams.get("page"));
-      return current === 1
-        ? envelope(
-            Array.from({ length: 100 }, (_, index) => ({
-              id: `unrelated-${index}`,
-              hostname: `unrelated-${index}.example.com`,
-              zone_id: ZONE_ID,
-            })),
-          )
-        : envelope([
+      return url.searchParams.get("hostname") === "shlook.example.com"
+        ? envelope([
             {
               id: "owner-domain-id",
               hostname: "shlook.example.com",
               zone_id: ZONE_ID,
               service: "shlook",
             },
-          ]);
+          ])
+        : envelope([]);
     }
     return baseResponse(url);
   });
@@ -380,11 +375,32 @@ test("paginates Workers domains using full-page and short-page semantics", async
   const requests = context.requests.filter((request) =>
     request.url.pathname.endsWith("/workers/domains"),
   );
-  expect(requests).toHaveLength(2);
-  expect(requests.map((request) => request.url.searchParams.get("page"))).toEqual(["1", "2"]);
-  expect(requests.every((request) => request.url.searchParams.get("per_page") === "100")).toBe(
+  expect(requests).toHaveLength(4);
+  expect(requests.map((request) => request.url.searchParams.get("hostname"))).toEqual([
+    "shlook.example.com",
+    "private.example.com",
+    "public.example.com",
+    "share.example.com",
+  ]);
+  expect(requests.every((request) => request.url.searchParams.get("zone_id") === ZONE_ID)).toBe(
     true,
   );
+  expect(requests.every((request) => !request.url.searchParams.has("page"))).toBe(true);
+  expect(
+    context.requests.filter((request) => request.url.pathname.endsWith("/workers/services/shlook")),
+  ).toHaveLength(1);
+  expect(plan.capabilities.workersServices).toEqual({ status: "available" });
+
+  const denied = harness(({ url }) =>
+    url.pathname.endsWith("/workers/services/shlook")
+      ? new Response(null, { status: 403 })
+      : baseResponse(url),
+  );
+  const deniedPlan = await planSetup(input, denied.dependencies);
+  expect(deniedPlan.capabilities.workersServices).toEqual({
+    status: "missing_permission",
+    httpStatus: 403,
+  });
 });
 
 function existingStateResponse(url: URL): Response {
@@ -528,10 +544,14 @@ test("fails closed when a deployment manifest target or resource ID does not mat
 test("rejects Worker service and custom-domain ownership conflicts before mutation", async () => {
   for (const conflict of ["worker", "domain"] as const) {
     const context = harness(({ url }) => {
-      if (conflict === "worker" && url.pathname.endsWith("/workers/services")) {
-        return page([{ id: "shlook", default_environment: { environment: "production" } }]);
+      if (conflict === "worker" && url.pathname.endsWith("/workers/services/shlook")) {
+        return envelope({ id: "shlook", default_environment: { environment: "production" } });
       }
-      if (conflict === "domain" && url.pathname.endsWith("/workers/domains")) {
+      if (
+        conflict === "domain" &&
+        url.pathname.endsWith("/workers/domains") &&
+        url.searchParams.get("hostname") === "shlook.example.com"
+      ) {
         return envelope([
           {
             id: "foreign-domain-id",
@@ -554,8 +574,8 @@ test("rejects Worker service and custom-domain ownership conflicts before mutati
 
 test("adopts the exact named Worker only with the explicit dangerous flag", async () => {
   const context = harness(({ url }) =>
-    url.pathname.endsWith("/workers/services")
-      ? page([{ id: "shlook", default_environment: { environment: "production" } }])
+    url.pathname.endsWith("/workers/services/shlook")
+      ? envelope({ id: "shlook", default_environment: { environment: "production" } })
       : baseResponse(url),
   );
   const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
@@ -634,9 +654,10 @@ test.each([
   expect(context.requests.every((request) => request.method === "GET")).toBe(true);
 });
 
-test("rejects expired service tokens and blocks near-expiry tokens without creating duplicates", async () => {
+test("rejects expired service tokens and renews manifest-owned near-expiry tokens without duplicates", async () => {
+  let renewed = false;
   const tokenResponse = (expiresAt: string) =>
-    harness(({ url }) => {
+    harness(({ url, method, body }) => {
       if (url.pathname.endsWith("/access/service_tokens")) {
         return page([
           {
@@ -647,6 +668,27 @@ test("rejects expired service tokens and blocks near-expiry tokens without creat
             expires_at: expiresAt,
           },
         ]);
+      }
+      if (url.pathname.endsWith("/access/service_tokens/token-id") && method === "PUT") {
+        expect(body).toEqual({ name: "shlook", duration: "2160h" });
+        renewed = true;
+        return envelope({
+          id: "token-id",
+          name: "shlook",
+          client_id: "client-id",
+          duration: "2160h",
+          expires_at: "2099-01-01T00:00:00.000Z",
+        });
+      }
+      if (url.pathname.endsWith("/access/service_tokens/token-id/rotate") && method === "POST") {
+        expect(body).toBeUndefined();
+        return envelope({
+          id: "token-id",
+          name: "shlook",
+          client_id: "client-id",
+          client_secret: "renewed-secret",
+          duration: "2160h",
+        });
       }
       return existingStateResponse(url);
     });
@@ -668,21 +710,301 @@ test("rejects expired service tokens and blocks near-expiry tokens without creat
     reason: "service_token_expiring",
   });
 
-  const applyError = await capturedError(
+  const statePersistence = persistence();
+  const result = await applySetup(
+    {
+      ...input,
+      deploymentManifest: plan.deploymentManifest,
+      persistence: statePersistence,
+      existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+    },
+    nearExpiry.dependencies,
+  );
+  expect(renewed).toBe(true);
+  expect(statePersistence.beginServiceTokenRotation).toHaveBeenCalledWith("token-id");
+  expect(statePersistence.saveServiceToken).toHaveBeenCalledWith({
+    resourceId: "token-id",
+    clientId: "client-id",
+    clientSecret: "renewed-secret",
+  });
+  expect(result.createdServiceTokenCredentials).toEqual({
+    clientId: "client-id",
+    clientSecret: "renewed-secret",
+  });
+  const tokenMutations = nearExpiry.requests.filter(
+    (request) => request.method !== "GET" && request.url.pathname.includes("/service_tokens"),
+  );
+  expect(tokenMutations.map((request) => [request.method, request.url.pathname])).toEqual([
+    ["PUT", `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens/token-id`],
+    ["POST", `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens/token-id/rotate`],
+  ]);
+});
+
+test("recovers a lost service-token create response from exact persisted create intent", async () => {
+  let remoteTokenExists = false;
+  let loseCreateResponse = true;
+  const savedTokens: unknown[] = [];
+  let persistedManifest: SetupDeploymentManifest | undefined;
+  const context = harness(({ url, method, body }) => {
+    if (method === "GET" && url.pathname.endsWith("/access/service_tokens")) {
+      return page(
+        remoteTokenExists
+          ? [
+              {
+                id: "token-id",
+                name: "shlook",
+                client_id: "client-id",
+                enabled: true,
+                expires_at: "2099-01-01T00:00:00.000Z",
+              },
+            ]
+          : [],
+      );
+    }
+    if (method === "GET" && url.pathname.endsWith("/policies")) return page([]);
+    if (method === "POST" && url.pathname.endsWith("/access/service_tokens")) {
+      expect(body).toEqual({ name: "shlook", duration: "2160h" });
+      remoteTokenExists = true;
+      if (loseCreateResponse) {
+        loseCreateResponse = false;
+        throw new Error("response lost after provider create");
+      }
+    }
+    if (method === "POST" && url.pathname.endsWith("/access/service_tokens/token-id/rotate")) {
+      return envelope({
+        id: "token-id",
+        name: "shlook",
+        client_id: "client-id",
+        client_secret: "recovered-secret",
+        duration: "2160h",
+      });
+    }
+    if (method === "POST" && url.pathname.endsWith("/policies")) {
+      return envelope({ ...(body as object), id: `policy-${context.requests.length}` });
+    }
+    return existingStateResponse(url);
+  });
+  const initialPlan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  expect(initialPlan.deploymentManifest.resources.access_service_token).toEqual({
+    action: "create",
+    name: "shlook",
+  });
+  const statePersistence = persistence({
+    saveIntent: vi.fn(async (manifest) => {
+      persistedManifest = manifest;
+    }),
+    saveResource: vi.fn(async (resource: SetupResourceKey, id: string) => {
+      if (persistedManifest === undefined) throw new Error("manifest missing");
+      persistedManifest = {
+        ...persistedManifest,
+        resources: {
+          ...persistedManifest.resources,
+          [resource]: { ...persistedManifest.resources[resource], id },
+        },
+      };
+    }),
+    saveServiceToken: vi.fn(async (token) => {
+      savedTokens.push(token);
+    }),
+  });
+
+  await expect(
+    applySetup(
+      {
+        ...input,
+        deploymentManifest: initialPlan.deploymentManifest,
+        persistence: statePersistence,
+      },
+      context.dependencies,
+    ),
+  ).rejects.toMatchObject({ code: "cloudflare_request_failed" });
+  expect(persistedManifest?.resources.access_service_token.id).toBeUndefined();
+
+  const result = await applySetup(
+    { ...input, deploymentManifest: persistedManifest!, persistence: statePersistence },
+    context.dependencies,
+  );
+  expect(result.resources.accessServiceToken).toMatchObject({
+    id: "token-id",
+    clientId: "client-id",
+    created: false,
+  });
+  expect(savedTokens).toEqual([
+    { resourceId: "token-id", clientId: "client-id", clientSecret: "recovered-secret" },
+  ]);
+  expect(persistedManifest?.resources.access_service_token).toEqual({
+    action: "create",
+    name: "shlook",
+    id: "token-id",
+  });
+  expect(
+    context.requests.filter(
+      (request) =>
+        request.method === "POST" && request.url.pathname.endsWith("/access/service_tokens"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    context.requests.filter((request) => request.url.pathname.endsWith("/token-id/rotate")),
+  ).toHaveLength(1);
+});
+
+test("a failed pending save returns a stable recovery error and reruns the rotation", async () => {
+  const context = harness(({ url, method }) => {
+    if (method === "POST" && url.pathname.endsWith("/access/service_tokens/token-id/rotate")) {
+      const attempt = context.requests.filter((request) =>
+        request.url.pathname.endsWith("/access/service_tokens/token-id/rotate"),
+      ).length;
+      return envelope({
+        id: "token-id",
+        name: "shlook",
+        client_id: "client-id",
+        client_secret: `recovered-secret-${attempt}`,
+        duration: "2160h",
+      });
+    }
+    return existingStateResponse(url);
+  });
+  const adopted = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  let persistedManifest: SetupDeploymentManifest = {
+    ...adopted.deploymentManifest,
+    resources: {
+      ...adopted.deploymentManifest.resources,
+      access_service_token: { action: "create", name: "shlook" },
+    },
+  };
+  let rejectPending = true;
+  const statePersistence = persistence({
+    saveResource: vi.fn(async (resource: SetupResourceKey, id: string) => {
+      persistedManifest = {
+        ...persistedManifest,
+        resources: {
+          ...persistedManifest.resources,
+          [resource]: { ...persistedManifest.resources[resource], id },
+        },
+      };
+    }),
+    saveServiceToken: vi.fn(async () => {
+      if (rejectPending) throw new Error("recovered-secret-1 must not leak");
+    }),
+  });
+
+  const firstError = await capturedError(
+    applySetup(
+      { ...input, deploymentManifest: persistedManifest, persistence: statePersistence },
+      context.dependencies,
+    ),
+  );
+  expect(firstError).toMatchObject({
+    code: "service_token_recovery_required",
+    message:
+      "Access service token credentials changed but could not be saved; rerun setup apply to recover",
+  });
+  expect(String(firstError)).not.toContain("recovered-secret-1");
+  expect(persistedManifest.resources.access_service_token.id).toBe("token-id");
+
+  rejectPending = false;
+  const result = await applySetup(
+    {
+      ...input,
+      deploymentManifest: persistedManifest,
+      serviceTokenRotationPending: true,
+      persistence: statePersistence,
+    },
+    context.dependencies,
+  );
+  expect(result.createdServiceTokenCredentials).toEqual({
+    clientId: "client-id",
+    clientSecret: "recovered-secret-2",
+  });
+  expect(
+    context.requests.filter((request) => request.url.pathname.endsWith("/token-id/rotate")),
+  ).toHaveLength(2);
+  expect(
+    context.requests.filter(
+      (request) =>
+        request.method === "POST" && request.url.pathname.endsWith("/access/service_tokens"),
+    ),
+  ).toHaveLength(0);
+});
+
+test("an interrupted near-expiry renewal resumes from its persisted rotation marker", async () => {
+  let nearExpiry = true;
+  let rejectPending = true;
+  const context = harness(({ url, method }) => {
+    if (method === "GET" && url.pathname.endsWith("/access/service_tokens")) {
+      return page([
+        {
+          id: "token-id",
+          name: "shlook",
+          client_id: "client-id",
+          enabled: true,
+          expires_at: nearExpiry
+            ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+            : "2099-01-01T00:00:00.000Z",
+        },
+      ]);
+    }
+    if (method === "PUT" && url.pathname.endsWith("/access/service_tokens/token-id")) {
+      nearExpiry = false;
+      return envelope({
+        id: "token-id",
+        name: "shlook",
+        client_id: "client-id",
+        duration: "2160h",
+        expires_at: "2099-01-01T00:00:00.000Z",
+      });
+    }
+    if (method === "POST" && url.pathname.endsWith("/access/service_tokens/token-id/rotate")) {
+      const attempt = context.requests.filter((request) =>
+        request.url.pathname.endsWith("/rotate"),
+      ).length;
+      return envelope({
+        id: "token-id",
+        name: "shlook",
+        client_id: "client-id",
+        client_secret: `renewal-secret-${attempt}`,
+        duration: "2160h",
+      });
+    }
+    return existingStateResponse(url);
+  });
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  const statePersistence = persistence({
+    saveServiceToken: vi.fn(async () => {
+      if (rejectPending) throw new Error("pending write failed");
+    }),
+  });
+
+  await expect(
     applySetup(
       {
         ...input,
         deploymentManifest: plan.deploymentManifest,
-        persistence: persistence(),
-        existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+        existingServiceToken: { clientId: "client-id", clientSecret: "old-secret" },
+        persistence: statePersistence,
       },
-      nearExpiry.dependencies,
+      context.dependencies,
     ),
+  ).rejects.toMatchObject({ code: "service_token_recovery_required" });
+
+  rejectPending = false;
+  await applySetup(
+    {
+      ...input,
+      deploymentManifest: plan.deploymentManifest,
+      serviceTokenRotationPending: true,
+      existingServiceToken: { clientId: "client-id", clientSecret: "old-secret" },
+      persistence: statePersistence,
+    },
+    context.dependencies,
   );
-  expect(applyError.code).toBe("setup_capabilities_unavailable");
-  expect(nearExpiry.requests.every((request) => request.method === "GET")).toBe(true);
   expect(
-    nearExpiry.requests.filter((request) => request.url.pathname.endsWith("/service_tokens")),
+    context.requests.filter(
+      (request) => request.method === "PUT" && request.url.pathname.endsWith("/token-id"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    context.requests.filter((request) => request.url.pathname.endsWith("/token-id/rotate")),
   ).toHaveLength(2);
 });
 

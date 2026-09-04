@@ -583,6 +583,87 @@ test("a crash after one-time token creation resumes from owner-only pending cred
   expect(JSON.stringify(result)).not.toContain(ACCESS_SECRET);
 });
 
+test("an interrupted renewal is journaled before rotation and reruns through pending promotion", async () => {
+  const rotatedSecret = "rotated-access-secret";
+  let stored = {
+    domain: "example.com",
+    accessClientId: "access-client-id",
+    accessClientSecret: "old-access-secret",
+  };
+  const loadConnection = vi.fn(async () => stored);
+  const persistConnection = vi.fn(async (credential) => {
+    stored = credential;
+    return "/config/shlook/auth.json";
+  });
+  let attempt = 0;
+  const applyCloudflareSetup = vi.fn(async (rawInput: unknown) => {
+    const applyInput = rawInput as ApplySetupInput;
+    attempt += 1;
+    expect(applyInput.serviceTokenRotationPending).toBe(attempt === 1 ? undefined : true);
+    await applyInput.persistence!.saveIntent(applyInput.deploymentManifest!);
+    await applyInput.persistence!.beginServiceTokenRotation("service-token-id");
+    await applyInput.persistence!.saveServiceToken({
+      resourceId: "service-token-id",
+      clientId: "access-client-id",
+      clientSecret: attempt === 1 ? "lost-rotated-secret" : rotatedSecret,
+    });
+    return {
+      ...applied,
+      resources: {
+        ...applied.resources,
+        accessServiceToken: { ...applied.resources.accessServiceToken, created: false },
+      },
+      createdServiceTokenCredentials: {
+        clientId: "access-client-id",
+        clientSecret: rotatedSecret,
+      },
+    };
+  });
+  const context = runtimeHarness({
+    applyCloudflareSetup,
+    loadConnection,
+    persistConnection,
+  });
+  context.fileSystem.putFile(
+    "/config/shlook/deployment/manifest.json",
+    `${JSON.stringify(deploymentManifest, null, 2)}\n`,
+  );
+  context.fileSystem.putFile(
+    "/config/shlook/deployment/secret-encryption-key",
+    `${ENCRYPTION_KEY}\n`,
+  );
+  const originalWrite = context.fileSystem.fs.writeFile;
+  let failPending = true;
+  context.fileSystem.fs.writeFile = vi.fn(async (path, data, options) => {
+    if (failPending && path.includes(".pending-service-token.json.")) {
+      failPending = false;
+      throw new Error("pending write failed");
+    }
+    return originalWrite(path, data, options);
+  });
+
+  await expect(
+    applySetupRuntime(
+      { domain: "example.com", ownerEmail: "owner@example.com" },
+      context.dependencies,
+    ),
+  ).rejects.toMatchObject({ code: "setup_pending_credentials_failed" });
+  const recoveryPath = "/config/shlook/deployment/service-token-rotation.json";
+  const pendingPath = "/config/shlook/deployment/pending-service-token.json";
+  expect(context.fileSystem.files.has(recoveryPath)).toBe(true);
+  expect(context.fileSystem.files.has(pendingPath)).toBe(false);
+  expect(context.persistConnection).not.toHaveBeenCalled();
+
+  await applySetupRuntime(
+    { domain: "example.com", ownerEmail: "owner@example.com" },
+    context.dependencies,
+  );
+  expect(context.fileSystem.files.has(recoveryPath)).toBe(false);
+  expect(context.fileSystem.files.has(pendingPath)).toBe(false);
+  expect(stored.accessClientSecret).toBe(rotatedSecret);
+  expect(applyCloudflareSetup).toHaveBeenCalledTimes(2);
+});
+
 test("never runs a route-bearing deploy when the temporary secrets file cannot be created", async () => {
   const context = runtimeHarness();
   const originalWrite = context.fileSystem.fs.writeFile;

@@ -26,6 +26,7 @@ const VERIFY_DELAY_MS = 2_000;
 const DEPLOYMENT_SECRET_FILE = "secret-encryption-key";
 const DEPLOYMENT_MANIFEST_FILE = "manifest.json";
 const PENDING_SERVICE_TOKEN_FILE = "pending-service-token.json";
+const SERVICE_TOKEN_ROTATION_FILE = "service-token-rotation.json";
 const MAX_STATE_BYTES = 65_536;
 
 export interface SetupCommandOptions {
@@ -299,6 +300,15 @@ interface PendingServiceTokenState extends PendingServiceToken {
   zoneId: string;
 }
 
+interface ServiceTokenRotationState {
+  version: 1;
+  domain: string;
+  ownerEmail: string;
+  accountId: string;
+  zoneId: string;
+  resourceId: string;
+}
+
 function manifestFailure(): SetupRuntimeError {
   return new SetupRuntimeError(
     "setup_manifest_storage_failed",
@@ -528,6 +538,50 @@ async function savePendingServiceToken(
   await atomicCreateOwnerFile(
     statePath(dependencies, PENDING_SERVICE_TOKEN_FILE),
     `${JSON.stringify(pending)}\n`,
+    dependencies,
+    pendingFailure,
+  );
+}
+
+function parseServiceTokenRotation(raw: string): ServiceTokenRotationState {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw pendingFailure();
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 6 ||
+    value.version !== 1 ||
+    !["domain", "ownerEmail", "accountId", "zoneId", "resourceId"].every(
+      (key) => typeof value[key] === "string" && (value[key] as string).length > 0,
+    ) ||
+    Object.values(value).some((entry) => typeof entry === "string" && entry.length > 4096)
+  ) {
+    throw pendingFailure();
+  }
+  return value as unknown as ServiceTokenRotationState;
+}
+
+async function loadServiceTokenRotation(
+  dependencies: SetupRuntimeDependencies,
+): Promise<ServiceTokenRotationState | undefined> {
+  const raw = await readOwnerFile(
+    statePath(dependencies, SERVICE_TOKEN_ROTATION_FILE),
+    dependencies.fs ?? defaultFileSystem,
+    pendingFailure,
+  );
+  return raw === undefined ? undefined : parseServiceTokenRotation(raw);
+}
+
+async function saveServiceTokenRotation(
+  rotation: ServiceTokenRotationState,
+  dependencies: SetupRuntimeDependencies,
+): Promise<void> {
+  await atomicCreateOwnerFile(
+    statePath(dependencies, SERVICE_TOKEN_ROTATION_FILE),
+    `${JSON.stringify(rotation)}\n`,
     dependencies,
     pendingFailure,
   );
@@ -872,6 +926,16 @@ async function removePendingServiceToken(dependencies: SetupRuntimeDependencies)
   }
 }
 
+async function removeServiceTokenRotation(dependencies: SetupRuntimeDependencies): Promise<void> {
+  try {
+    await (dependencies.fs ?? defaultFileSystem).unlink(
+      statePath(dependencies, SERVICE_TOKEN_ROTATION_FILE),
+    );
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw pendingFailure();
+  }
+}
+
 async function reconcileManifest(
   input: SetupRuntimeInput,
   manifest: SetupDeploymentManifest,
@@ -916,6 +980,21 @@ function assertPendingMatchesManifest(
   }
 }
 
+function assertRotationMatchesManifest(
+  rotation: ServiceTokenRotationState,
+  manifest: SetupDeploymentManifest,
+): void {
+  if (
+    rotation.domain !== manifest.domain ||
+    rotation.ownerEmail !== manifest.ownerEmail ||
+    rotation.accountId !== manifest.accountId ||
+    rotation.zoneId !== manifest.zoneId ||
+    manifest.resources.access_service_token.id !== rotation.resourceId
+  ) {
+    throw pendingFailure();
+  }
+}
+
 async function verifiedPersistedConnection(
   credential: ConnectionCredential,
   dependencies: SetupRuntimeDependencies,
@@ -942,7 +1021,17 @@ export async function applySetupRuntime(
   const existing = await storedCredential(input, dependencies);
   let manifest = await loadDeploymentManifest(dependencies);
   let pending = await loadPendingServiceToken(dependencies);
-  const mayCreateDeploymentSecret = manifest === undefined || pending !== undefined;
+  let rotation = await loadServiceTokenRotation(dependencies);
+  if (rotation !== undefined) {
+    if (manifest === undefined) throw pendingFailure();
+    assertRotationMatchesManifest(rotation, manifest);
+    if (pending !== undefined && pending.resourceId !== rotation.resourceId) throw pendingFailure();
+  }
+  const mayCreateDeploymentSecret =
+    manifest === undefined ||
+    pending !== undefined ||
+    rotation !== undefined ||
+    manifest.resources.access_service_token.id === undefined;
   if (pending !== undefined) {
     if (manifest === undefined) throw pendingFailure();
     assertPendingMatchesManifest(pending, manifest);
@@ -985,6 +1074,9 @@ export async function applySetupRuntime(
               clientSecret: recoverableCredential.accessClientSecret,
             },
           }),
+      ...(rotation !== undefined && pending === undefined
+        ? { serviceTokenRotationPending: true }
+        : {}),
       persistence: {
         saveIntent: async (nextManifest) => {
           if (manifest !== undefined && JSON.stringify(manifest) !== JSON.stringify(nextManifest)) {
@@ -1004,8 +1096,26 @@ export async function applySetupRuntime(
           };
           await saveDeploymentManifest(manifest, dependencies);
         },
+        beginServiceTokenRotation: async (resourceId) => {
+          if (manifest === undefined || manifest.resources.access_service_token.id !== resourceId) {
+            throw pendingFailure();
+          }
+          const nextRotation: ServiceTokenRotationState = {
+            version: 1,
+            domain: manifest.domain,
+            ownerEmail: manifest.ownerEmail,
+            accountId: manifest.accountId,
+            zoneId: manifest.zoneId,
+            resourceId,
+          };
+          await saveServiceTokenRotation(nextRotation, dependencies);
+          rotation = nextRotation;
+        },
         saveServiceToken: async (token) => {
           if (manifest === undefined) throw pendingFailure();
+          if (rotation !== undefined && rotation.resourceId !== token.resourceId) {
+            throw pendingFailure();
+          }
           pending = {
             version: 1,
             domain: manifest.domain,
@@ -1049,6 +1159,7 @@ export async function applySetupRuntime(
 
   const connectionPath = await verifiedPersistedConnection(credential, dependencies);
   if (pending !== undefined) await removePendingServiceToken(dependencies);
+  if (rotation !== undefined) await removeServiceTokenRotation(dependencies);
 
   return {
     mode: "apply",

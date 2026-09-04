@@ -24,7 +24,7 @@ export const CLOUDFLARE_SETUP_NAMES = {
 
 export type SetupSurface = "owner" | "private";
 export type CapabilityStatus = "available" | "missing_permission" | "rate_limited" | "unavailable";
-export type SetupOperation = "create" | "adopt" | "reuse" | "controller" | "blocked";
+export type SetupOperation = "create" | "adopt" | "reuse" | "renew" | "controller" | "blocked";
 export type SetupIntentAction = "create" | "adopt";
 export type SetupResourceKey =
   | "d1"
@@ -66,6 +66,7 @@ export interface PendingServiceToken {
 export interface SetupPersistence {
   saveIntent(manifest: SetupDeploymentManifest): Promise<void>;
   saveResource(resource: SetupResourceKey, id: string): Promise<void>;
+  beginServiceTokenRotation(resourceId: string): Promise<void>;
   saveServiceToken(token: PendingServiceToken): Promise<void>;
 }
 
@@ -90,6 +91,8 @@ export interface ExistingServiceTokenCredentials {
 
 export interface ApplySetupInput extends SetupInput {
   existingServiceToken?: ExistingServiceTokenCredentials;
+  /** Runtime-only journal signal used to resume an interrupted secret rotation. */
+  serviceTokenRotationPending?: boolean;
   persistence?: SetupPersistence;
 }
 
@@ -229,6 +232,7 @@ export type CloudflareSetupErrorCode =
   | "setup_state_persistence_required"
   | "setup_state_persistence_failed"
   | "setup_capabilities_unavailable"
+  | "service_token_recovery_required"
   | "service_token_secret_unavailable"
   | "service_token_credentials_conflict";
 
@@ -437,6 +441,13 @@ function expectedResource(
     return;
   }
   if (expected.id === undefined) {
+    if (
+      key === "access_service_token" &&
+      expected.action === "create" &&
+      Object.keys(expected).length === 2
+    ) {
+      return;
+    }
     if (
       !discoverCreatedWorkersResources ||
       expected.action !== "create" ||
@@ -715,6 +726,21 @@ class CloudflareApiClient {
       );
     }
     return decoded as unknown as ApiEnvelope;
+  }
+
+  async requestOptional(path: string): Promise<ApiEnvelope | undefined> {
+    try {
+      return await this.request(path);
+    } catch (cause) {
+      if (
+        cause instanceof CloudflareSetupError &&
+        cause.code === "cloudflare_api_error" &&
+        cause.status === 404
+      ) {
+        return undefined;
+      }
+      throw cause;
+    }
   }
 }
 
@@ -1123,13 +1149,11 @@ async function inspectServiceToken(client: CloudflareApiClient, accountId: strin
 }
 
 async function inspectWorkerService(client: CloudflareApiClient, accountId: string) {
-  const items = await pagedArray(client, `/accounts/${accountId}/workers/services`, {});
-  const selected = exactOne(
-    items.filter(
-      (value): value is WorkersServiceRecord => isRecord(value) && value.id === "shlook",
-    ),
-  );
-  return selected === undefined ? undefined : { id: "shlook", name: "shlook" };
+  const envelope = await client.requestOptional(`/accounts/${accountId}/workers/services/shlook`);
+  if (envelope === undefined) return undefined;
+  const selected = objectResult(envelope) as WorkersServiceRecord;
+  if (selected.id !== "shlook") invalidResponse();
+  return { id: "shlook", name: "shlook" };
 }
 
 async function inspectWorkersDomains(
@@ -1138,27 +1162,34 @@ async function inspectWorkersDomains(
   zoneId: string,
   origins: SetupOrigins,
 ) {
-  const records = await pagedArray(client, `/accounts/${accountId}/workers/domains`, {
-    zone_id: zoneId,
-  });
-  const expected = new Set(Object.values(origins).map((origin) => new URL(origin).hostname));
-  return records
-    .filter(
-      (value): value is WorkersDomainRecord =>
-        isRecord(value) &&
-        value.zone_id === zoneId &&
-        nonemptyString(value.id) &&
-        nonemptyString(value.hostname) &&
-        expected.has(value.hostname),
-    )
-    .map((value) => {
-      if (!nonemptyString(value.service) || value.service !== "shlook") resourceConflict();
+  const records = await Promise.all(
+    Object.values(origins).map(async (origin) => {
+      const hostname = new URL(origin).hostname;
+      const query = new URLSearchParams({ hostname, zone_id: zoneId });
+      const values = arrayResult(
+        await client.request(`/accounts/${accountId}/workers/domains?${query.toString()}`),
+      );
+      for (const value of values) {
+        if (
+          !isRecord(value) ||
+          !nonemptyString(value.id) ||
+          value.hostname !== hostname ||
+          value.zone_id !== zoneId
+        ) {
+          invalidResponse();
+        }
+      }
+      const selected = exactOne(values as WorkersDomainRecord[]);
+      if (selected === undefined) return undefined;
+      if (!nonemptyString(selected.service) || selected.service !== "shlook") resourceConflict();
       return {
-        id: value.id as string,
-        hostname: value.hostname as string,
-        service: value.service,
+        id: selected.id as string,
+        hostname,
+        service: selected.service,
       };
-    });
+    }),
+  );
+  return records.filter((record): record is NonNullable<typeof record> => record !== undefined);
 }
 
 function emptyRules(value: unknown): boolean {
@@ -1524,7 +1555,7 @@ async function inspectSetup(
     });
   }
   actions.push(
-    state.accessServiceToken?.nearExpiry === true
+    state.accessServiceToken?.nearExpiry === true && input.deploymentManifest === undefined
       ? {
           resource: "access_service_token",
           operation: "blocked",
@@ -1532,13 +1563,21 @@ async function inspectSetup(
           id: state.accessServiceToken.id,
           reason: "service_token_expiring",
         }
-      : resourceAction(
-          "access_service_token",
-          CLOUDFLARE_SETUP_NAMES.accessServiceToken,
-          capabilities.accessServiceTokens,
-          input,
-          state.accessServiceToken,
-        ),
+      : state.accessServiceToken?.nearExpiry === true
+        ? {
+            resource: "access_service_token",
+            operation: "renew",
+            name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+            id: state.accessServiceToken.id,
+            reason: "service_token_expiring",
+          }
+        : resourceAction(
+            "access_service_token",
+            CLOUDFLARE_SETUP_NAMES.accessServiceToken,
+            capabilities.accessServiceTokens,
+            input,
+            state.accessServiceToken,
+          ),
   );
   for (const surface of ["owner", "private"] as const) {
     const policies = state.accessPolicies[surface];
@@ -1719,13 +1758,73 @@ async function createServiceToken(
     clientId: result.client_id,
     clientSecret: result.client_secret,
   };
-  await persistSetupState(() => saveServiceToken(pending));
+  await persistServiceTokenCredentials(() => saveServiceToken(pending));
   return {
     resource: {
       id: pending.resourceId,
       name: CLOUDFLARE_SETUP_NAMES.accessServiceToken,
       clientId: pending.clientId,
       created: true,
+    },
+    credentials: { clientId: pending.clientId, clientSecret: pending.clientSecret },
+  };
+}
+
+async function updateServiceTokenDuration(
+  client: CloudflareApiClient,
+  accountId: string,
+  token: NonNullable<ExistingState["accessServiceToken"]>,
+): Promise<void> {
+  const result = objectResult(
+    await client.request(
+      `/accounts/${accountId}/access/service_tokens/${encodeURIComponent(token.id)}`,
+      "PUT",
+      { name: CLOUDFLARE_SETUP_NAMES.accessServiceToken, duration: SERVICE_TOKEN_DURATION },
+    ),
+  );
+  if (
+    result.id !== token.id ||
+    result.name !== CLOUDFLARE_SETUP_NAMES.accessServiceToken ||
+    result.client_id !== token.clientId ||
+    result.duration !== SERVICE_TOKEN_DURATION ||
+    !nonemptyString(result.expires_at)
+  ) {
+    invalidResponse();
+  }
+}
+
+async function rotateServiceToken(
+  client: CloudflareApiClient,
+  accountId: string,
+  token: NonNullable<ExistingState["accessServiceToken"]>,
+  saveServiceToken: (token: PendingServiceToken) => Promise<void>,
+): Promise<{ resource: AppliedServiceToken; credentials: CreatedServiceTokenCredentials }> {
+  const result = objectResult(
+    await client.request(
+      `/accounts/${accountId}/access/service_tokens/${encodeURIComponent(token.id)}/rotate`,
+      "POST",
+    ),
+  );
+  if (
+    result.id !== token.id ||
+    result.name !== CLOUDFLARE_SETUP_NAMES.accessServiceToken ||
+    result.client_id !== token.clientId ||
+    !nonemptyString(result.client_secret)
+  ) {
+    invalidResponse();
+  }
+  const pending = {
+    resourceId: token.id,
+    clientId: token.clientId,
+    clientSecret: result.client_secret,
+  };
+  await persistServiceTokenCredentials(() => saveServiceToken(pending));
+  return {
+    resource: {
+      id: token.id,
+      name: token.name,
+      clientId: token.clientId,
+      created: false,
     },
     credentials: { clientId: pending.clientId, clientSecret: pending.clientSecret },
   };
@@ -1770,6 +1869,17 @@ async function persistSetupState(operation: () => Promise<void>): Promise<void> 
   }
 }
 
+async function persistServiceTokenCredentials(operation: () => Promise<void>): Promise<void> {
+  try {
+    await operation();
+  } catch {
+    throw new CloudflareSetupError(
+      "service_token_recovery_required",
+      "Access service token credentials changed but could not be saved; rerun setup apply to recover",
+    );
+  }
+}
+
 export async function applySetup(
   input: ApplySetupInput,
   dependencies: CloudflareSetupDependencies,
@@ -1791,14 +1901,43 @@ export async function applySetup(
     );
   }
 
+  const serviceTokenIntent = input.deploymentManifest?.resources.access_service_token;
+  const interruptedCreate =
+    state.accessServiceToken !== undefined &&
+    serviceTokenIntent?.action === "create" &&
+    serviceTokenIntent.id === undefined &&
+    Object.keys(serviceTokenIntent).length === 2;
+  const rotationRecovery = input.serviceTokenRotationPending === true;
+  if (
+    rotationRecovery &&
+    (state.accessServiceToken === undefined ||
+      serviceTokenIntent === undefined ||
+      serviceTokenIntent.id !== state.accessServiceToken.id)
+  ) {
+    manifestMismatch();
+  }
+  const renewal =
+    state.accessServiceToken?.nearExpiry === true &&
+    serviceTokenIntent?.id === state.accessServiceToken.id;
+  const ownedCreateSecretRecovery =
+    state.accessServiceToken !== undefined &&
+    serviceTokenIntent?.action === "create" &&
+    serviceTokenIntent.id === state.accessServiceToken.id &&
+    input.existingServiceToken === undefined;
+  const willRotateServiceToken =
+    interruptedCreate || rotationRecovery || renewal || ownedCreateSecretRecovery;
+
   if (state.accessServiceToken !== undefined) {
-    if (input.existingServiceToken === undefined) {
+    if (input.existingServiceToken === undefined && !willRotateServiceToken) {
       throw new CloudflareSetupError(
         "service_token_secret_unavailable",
         "the existing shlook Access service token secret cannot be recovered",
       );
     }
-    if (input.existingServiceToken.clientId !== state.accessServiceToken.clientId) {
+    if (
+      input.existingServiceToken !== undefined &&
+      input.existingServiceToken.clientId !== state.accessServiceToken.clientId
+    ) {
       throw new CloudflareSetupError(
         "service_token_credentials_conflict",
         "existing Access service token credentials do not match Cloudflare",
@@ -1851,6 +1990,21 @@ export async function applySetup(
     await persistSetupState(() =>
       persistence.saveResource("access_service_token", accessServiceToken.id),
     );
+  } else if (willRotateServiceToken) {
+    if (interruptedCreate) {
+      await persistSetupState(() =>
+        persistence.saveResource("access_service_token", state.accessServiceToken!.id),
+      );
+    }
+    await persistSetupState(() =>
+      persistence.beginServiceTokenRotation(state.accessServiceToken!.id),
+    );
+    if (renewal) await updateServiceTokenDuration(client, accountId, state.accessServiceToken);
+    const rotated = await rotateServiceToken(client, accountId, state.accessServiceToken, (token) =>
+      persistence.saveServiceToken(token),
+    );
+    accessServiceToken = rotated.resource;
+    createdServiceTokenCredentials = rotated.credentials;
   } else {
     accessServiceToken = {
       id: state.accessServiceToken.id,
