@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { chmod, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, parse as parsePath } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -19,6 +19,7 @@ export interface ConnectionCredential {
 
 export interface ConnectionFileSystem {
   mkdir(path: string, options: { recursive: true; mode: number }): Promise<unknown>;
+  realpath(path: string): Promise<string>;
   writeFile(
     path: string,
     data: string,
@@ -31,6 +32,7 @@ export interface ConnectionFileSystem {
 }
 
 export interface ConnectionFileHandle {
+  chmod(mode: number): Promise<void>;
   stat(): Promise<{
     isFile(): boolean;
     uid: number;
@@ -56,6 +58,7 @@ export interface ConnectionDependencies {
 
 const defaultFileSystem: ConnectionFileSystem = {
   mkdir,
+  realpath,
   writeFile,
   rename,
   chmod,
@@ -65,6 +68,46 @@ const defaultFileSystem: ConnectionFileSystem = {
 
 function invalidCredential(): Error {
   return new Error("invalid connection credential");
+}
+
+function errorCode(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(cause, "code");
+  return descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+async function assertCanonicalPathComponents(
+  path: string,
+  fs: ConnectionFileSystem,
+): Promise<void> {
+  const root = parsePath(path).root;
+  let existingPath = path;
+  for (;;) {
+    try {
+      if ((await fs.realpath(existingPath)) !== existingPath) {
+        throw new Error("unsafe connection credential path");
+      }
+      return;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT" || existingPath === root) throw cause;
+      existingPath = dirname(existingPath);
+    }
+  }
+}
+
+async function chmodConnectionFile(path: string, fs: ConnectionFileSystem): Promise<void> {
+  await assertCanonicalPathComponents(path, fs);
+  const handle = await fs.open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    await handle.chmod(0o600);
+  } finally {
+    await handle.close();
+  }
 }
 
 export function assertConnectionCredentialStorageSupported(
@@ -197,13 +240,15 @@ export async function persistConnectionCredential(
     temporaryPath = join(directory, `.auth.json.${randomId}`);
 
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    await assertCanonicalPathComponents(directory, fs);
     await fs.writeFile(temporaryPath, `${credentialJson(credential)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
+    await assertCanonicalPathComponents(path, fs);
     await fs.rename(temporaryPath, path);
-    await fs.chmod(path, 0o600);
+    await chmodConnectionFile(path, fs);
     return path;
   } catch {
     if (fs !== undefined && temporaryPath !== undefined) {
@@ -224,6 +269,7 @@ export async function loadConnectionCredential(
     const uid = assertConnectionCredentialStorageSupported(dependencies);
     const path = resolveConnectionAuthPath(dependencies);
     const fs = dependencies.fs ?? defaultFileSystem;
+    await assertCanonicalPathComponents(path, fs);
     const handle = await fs.open(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,

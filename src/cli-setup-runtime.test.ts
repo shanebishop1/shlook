@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { Buffer } from "node:buffer";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { expect, test, vi } from "vitest";
 
@@ -150,6 +153,10 @@ function fileSystemHarness() {
     mkdir: vi.fn(async (path, options) => {
       events.push(`mkdir:${path}:${options.mode.toString(8)}`);
     }),
+    realpath: vi.fn(async (path) => {
+      events.push(`realpath:${path}`);
+      return path;
+    }),
     chmod: vi.fn(async (path, mode) => {
       events.push(`chmod:${path}:${mode.toString(8)}`);
       const value = files.get(path);
@@ -185,6 +192,10 @@ function fileSystemHarness() {
       if (value === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
       if (value.type === "symlink") throw Object.assign(new Error("symlink"), { code: "ELOOP" });
       return {
+        chmod: vi.fn(async (mode) => {
+          events.push(`fchmod:${path}:${mode.toString(8)}`);
+          value.mode = mode;
+        }),
         stat: vi.fn(async () => ({
           isFile: () => value.type === "file",
           mode: value.mode,
@@ -346,7 +357,10 @@ test("plan loads ownership state and delegates without local or command mutation
   );
   expect(context.runCommand).not.toHaveBeenCalled();
   expect(context.persistConnection).not.toHaveBeenCalled();
-  expect(context.fileSystem.events).toEqual(["open:/config/shlook/deployment/manifest.json"]);
+  expect(context.fileSystem.events).toEqual([
+    "realpath:/config/shlook/deployment/manifest.json",
+    "open:/config/shlook/deployment/manifest.json",
+  ]);
   expect(context.dependencies.randomBytes).not.toHaveBeenCalled();
 });
 
@@ -366,9 +380,13 @@ test("apply writes a strict secret-free config and deploys routes with an owner-
         !event.startsWith("open:"),
     ),
   ).toEqual([
+    `realpath:${configPath}`,
+    "realpath:/config/shlook/deployment/.wrangler.json.fixed-id",
     "write:/config/shlook/deployment/.wrangler.json.fixed-id:600:wx",
+    `realpath:${configPath}`,
     `rename:/config/shlook/deployment/.wrangler.json.fixed-id:${configPath}`,
-    `chmod:${configPath}:600`,
+    `realpath:${configPath}`,
+    `fchmod:${configPath}:600`,
   ]);
   const config = JSON.parse(context.fileSystem.config());
   expect(config).toEqual({
@@ -711,6 +729,74 @@ test("deployment secret loading rejects invalid, unsafe, and permissive files wi
   ).rejects.toMatchObject({ code: "setup_secret_storage_failed" });
   expect(blockedApply.dependencies.applyCloudflareSetup).toHaveBeenCalledOnce();
   expect(blockedApply.runCommand).not.toHaveBeenCalled();
+});
+
+test("rejects mocked setup-state ancestor redirection before reading or writing", async () => {
+  const context = runtimeHarness();
+  vi.mocked(context.fileSystem.fs.realpath).mockResolvedValue(
+    "/redirected/shlook/deployment/manifest.json",
+  );
+
+  await expect(
+    planSetupRuntime(
+      { domain: "example.com", ownerEmail: "owner@example.com", accountId: ACCOUNT_ID },
+      context.dependencies,
+    ),
+  ).rejects.toMatchObject({ code: "setup_manifest_storage_failed" });
+  expect(context.fileSystem.fs.open).not.toHaveBeenCalled();
+  expect(context.fileSystem.fs.writeFile).not.toHaveBeenCalled();
+
+  const secretContext = runtimeHarness();
+  vi.mocked(secretContext.fileSystem.fs.realpath).mockResolvedValue(
+    "/redirected/shlook/deployment",
+  );
+  await expect(loadOrCreateDeploymentSecret(secretContext.dependencies)).rejects.toMatchObject({
+    code: "setup_secret_storage_failed",
+  });
+  expect(secretContext.fileSystem.fs.writeFile).not.toHaveBeenCalled();
+  expect(secretContext.dependencies.randomBytes).not.toHaveBeenCalled();
+});
+
+test("rejects real symlinked setup-state directories without writing secrets through them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "shlook-setup-symlink-"));
+  const redirected = join(root, "redirected");
+  await mkdir(redirected);
+
+  try {
+    const xdg = join(root, "xdg");
+    await mkdir(join(xdg, "shlook"), { recursive: true });
+    await symlink(redirected, join(xdg, "shlook", "deployment"), "dir");
+    const deploymentLink = runtimeHarness({ env: { XDG_CONFIG_HOME: xdg }, fs: undefined });
+    await expect(loadOrCreateDeploymentSecret(deploymentLink.dependencies)).rejects.toMatchObject({
+      code: "setup_secret_storage_failed",
+      message: "unable to load or save the deployment encryption secret",
+    });
+
+    const ancestorTarget = join(root, "ancestor-target");
+    const ancestorLink = join(root, "ancestor-link");
+    await mkdir(ancestorTarget);
+    await symlink(ancestorTarget, ancestorLink, "dir");
+    const ancestor = runtimeHarness({
+      env: { XDG_CONFIG_HOME: join(ancestorLink, "config") },
+      fs: undefined,
+    });
+    await expect(loadOrCreateDeploymentSecret(ancestor.dependencies)).rejects.toMatchObject({
+      code: "setup_secret_storage_failed",
+    });
+
+    await expect(
+      writeFile(join(redirected, "secret-encryption-key"), "untouched", { flag: "wx" }),
+    ).resolves.toBe(undefined);
+    await expect(
+      writeFile(
+        join(ancestorTarget, "config", "shlook", "deployment", "secret-encryption-key"),
+        "untouched",
+        { flag: "wx" },
+      ),
+    ).resolves.toBe(undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects permissive or malformed ownership manifests before Cloudflare mutation", async () => {

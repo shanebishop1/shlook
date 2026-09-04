@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { constants } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -92,6 +92,10 @@ function fileSystemHarness(
     mkdir: vi.fn(async (path, options) => {
       events.push(`mkdir:${path}:${options.mode.toString(8)}`);
     }),
+    realpath: vi.fn(async (path) => {
+      events.push(`realpath:${path}`);
+      return path;
+    }),
     writeFile: vi.fn(async (path, data, options) => {
       events.push(`write:${path}:${options.mode.toString(8)}:${options.flag}`);
       expect(data).toBe(`${JSON.stringify(credential)}\n`);
@@ -102,7 +106,10 @@ function fileSystemHarness(
     chmod: vi.fn(async (path, mode) => {
       events.push(`chmod:${path}:${mode.toString(8)}`);
     }),
-    open: vi.fn(async (_path, flags) => ({
+    open: vi.fn(async (path, flags) => ({
+      chmod: vi.fn(async (mode) => {
+        events.push(`fchmod:${path}:${mode.toString(8)}`);
+      }),
       stat: vi.fn(async () => ({
         isFile: () => true,
         uid: 1_000,
@@ -137,10 +144,40 @@ test("atomically persists auth.json with owner-only permissions", async () => {
   expect(path).toBe("/config/shlook/auth.json");
   expect(events).toEqual([
     "mkdir:/config/shlook:700",
+    "realpath:/config/shlook",
     "write:/config/shlook/.auth.json.fixed-id:600:wx",
+    "realpath:/config/shlook/auth.json",
     "rename:/config/shlook/.auth.json.fixed-id:/config/shlook/auth.json",
-    "chmod:/config/shlook/auth.json:600",
+    "realpath:/config/shlook/auth.json",
+    "fchmod:/config/shlook/auth.json:600",
   ]);
+});
+
+test("rejects mocked ancestor redirection before credential access", async () => {
+  const persisted = fileSystemHarness();
+  vi.mocked(persisted.fs.realpath).mockResolvedValue("/redirected/config/shlook");
+
+  await expect(
+    persistConnectionCredential(credential, {
+      env: { XDG_CONFIG_HOME: "/config" },
+      fs: persisted.fs,
+      randomId: () => "fixed-id",
+      currentUid: () => 1_000,
+    }),
+  ).rejects.toThrow("unable to persist connection credential");
+  expect(persisted.fs.writeFile).not.toHaveBeenCalled();
+  expect(persisted.fs.chmod).not.toHaveBeenCalled();
+
+  const loaded = fileSystemHarness();
+  vi.mocked(loaded.fs.realpath).mockResolvedValue("/redirected/config/shlook/auth.json");
+  await expect(
+    loadConnectionCredential({
+      env: { XDG_CONFIG_HOME: "/config" },
+      fs: loaded.fs,
+      currentUid: () => 1_000,
+    }),
+  ).rejects.toThrow("unable to load connection credential");
+  expect(loaded.fs.open).not.toHaveBeenCalled();
 });
 
 test("rejects persistence before filesystem access when POSIX ownership is unavailable", async () => {
@@ -251,6 +288,50 @@ test("rejects real credential files with broad permissions or oversized contents
     await expect(loadConnectionCredential({ env: { XDG_CONFIG_HOME: root } })).rejects.toThrow(
       "unable to load connection credential",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persists credentials beneath an ordinary absolute temporary path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "shlook-connection-ordinary-"));
+  try {
+    const path = join(root, "shlook", "auth.json");
+    await expect(
+      persistConnectionCredential(credential, { env: { XDG_CONFIG_HOME: root } }),
+    ).resolves.toBe(path);
+    await expect(readFile(path, "utf8")).resolves.toBe(`${JSON.stringify(credential)}\n`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects real symlinked credential directories without writing through them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "shlook-connection-symlink-"));
+  const redirected = join(root, "redirected");
+  await mkdir(redirected);
+
+  try {
+    const xdgLink = join(root, "xdg-link");
+    await symlink(redirected, xdgLink, "dir");
+    await expect(
+      persistConnectionCredential(credential, { env: { XDG_CONFIG_HOME: xdgLink } }),
+    ).rejects.toThrow("unable to persist connection credential");
+
+    const home = join(root, "home");
+    const config = join(home, ".config");
+    await mkdir(config, { recursive: true });
+    await symlink(redirected, join(config, "shlook"), "dir");
+    await expect(
+      persistConnectionCredential(credential, { env: {}, home: () => home }),
+    ).rejects.toThrow("unable to persist connection credential");
+
+    await expect(loadConnectionCredential({ env: {}, home: () => home })).rejects.toThrow(
+      "unable to load connection credential",
+    );
+    await expect(
+      writeFile(join(redirected, "auth.json"), "untouched", { flag: "wx" }),
+    ).resolves.toBe(undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

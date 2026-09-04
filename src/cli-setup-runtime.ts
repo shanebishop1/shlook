@@ -1,6 +1,6 @@
 import { randomBytes as nodeRandomBytes, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, parse as parsePath } from "node:path";
 
@@ -43,6 +43,7 @@ export type SetupCommandRunner = (
 
 export interface SetupRuntimeFileSystem {
   mkdir(path: string, options: { recursive: true; mode: number }): Promise<unknown>;
+  realpath(path: string): Promise<string>;
   chmod(path: string, mode: number): Promise<unknown>;
   writeFile(
     path: string,
@@ -56,6 +57,7 @@ export interface SetupRuntimeFileSystem {
 }
 
 export interface SetupRuntimeFileHandle {
+  chmod(mode: number): Promise<void>;
   stat(): Promise<{
     isFile(): boolean;
     mode: number;
@@ -132,6 +134,7 @@ export class SetupRuntimeError extends Error {
 
 const defaultFileSystem: SetupRuntimeFileSystem = {
   mkdir,
+  realpath,
   chmod,
   writeFile,
   rename,
@@ -150,6 +153,38 @@ function safeBasePath(value: string): string {
     throw new Error("invalid setup configuration path");
   }
   return normalized;
+}
+
+async function assertCanonicalPathComponents(
+  path: string,
+  fs: SetupRuntimeFileSystem,
+): Promise<void> {
+  const root = parsePath(path).root;
+  let existingPath = path;
+  for (;;) {
+    try {
+      if ((await fs.realpath(existingPath)) !== existingPath) {
+        throw new Error("unsafe setup state path");
+      }
+      return;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT" || existingPath === root) throw cause;
+      existingPath = dirname(existingPath);
+    }
+  }
+}
+
+async function chmodOwnerFile(path: string, fs: SetupRuntimeFileSystem): Promise<void> {
+  await assertCanonicalPathComponents(path, fs);
+  const handle = await fs.open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    await handle.chmod(CONFIG_MODE);
+  } finally {
+    await handle.close();
+  }
 }
 
 export function resolveSetupConfigPath(
@@ -226,14 +261,17 @@ async function writeSetupConfig(
   const fs = dependencies.fs ?? defaultFileSystem;
   try {
     await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await assertCanonicalPathComponents(directory, fs);
     await fs.chmod(directory, DIRECTORY_MODE);
+    await assertCanonicalPathComponents(temporaryPath, fs);
     await fs.writeFile(temporaryPath, setupConfig(input, result, dependencies.packageRoot), {
       encoding: "utf8",
       flag: "wx",
       mode: CONFIG_MODE,
     });
+    await assertCanonicalPathComponents(path, fs);
     await fs.rename(temporaryPath, path);
-    await fs.chmod(path, CONFIG_MODE);
+    await chmodOwnerFile(path, fs);
     return path;
   } catch {
     try {
@@ -338,6 +376,7 @@ async function readOwnerFile(
 ): Promise<string | undefined> {
   let handle: SetupRuntimeFileHandle;
   try {
+    await assertCanonicalPathComponents(path, fs);
     handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return undefined;
@@ -378,16 +417,19 @@ async function atomicWriteOwnerFile(
   let created = false;
   try {
     await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await assertCanonicalPathComponents(directory, fs);
     await fs.chmod(directory, DIRECTORY_MODE);
+    await assertCanonicalPathComponents(temporaryPath, fs);
     await fs.writeFile(temporaryPath, data, {
       encoding: "utf8",
       flag: "wx",
       mode: CONFIG_MODE,
     });
     created = true;
+    await assertCanonicalPathComponents(path, fs);
     await fs.rename(temporaryPath, path);
     created = false;
-    await fs.chmod(path, CONFIG_MODE);
+    await chmodOwnerFile(path, fs);
   } catch {
     throw failure();
   } finally {
@@ -409,7 +451,9 @@ async function atomicCreateOwnerFile(
   let created = false;
   try {
     await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await assertCanonicalPathComponents(directory, fs);
     await fs.chmod(directory, DIRECTORY_MODE);
+    await assertCanonicalPathComponents(temporaryPath, fs);
     await fs.writeFile(temporaryPath, data, {
       encoding: "utf8",
       flag: "wx",
@@ -417,6 +461,7 @@ async function atomicCreateOwnerFile(
     });
     created = true;
     try {
+      await assertCanonicalPathComponents(path, fs);
       await fs.link(temporaryPath, path);
     } catch (cause) {
       if (errorCode(cause) !== "EEXIST") throw cause;
@@ -424,7 +469,7 @@ async function atomicCreateOwnerFile(
       if (winner !== data) throw failure();
       return;
     }
-    await fs.chmod(path, CONFIG_MODE);
+    await chmodOwnerFile(path, fs);
   } catch (cause) {
     if (cause instanceof SetupRuntimeError) throw cause;
     throw failure();
@@ -606,6 +651,7 @@ async function loadDeploymentSecret(
 ): Promise<string | undefined> {
   let handle: SetupRuntimeFileHandle;
   try {
+    await assertCanonicalPathComponents(path, fs);
     handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return undefined;
@@ -641,6 +687,7 @@ async function loadDeploymentSecret(
 async function deploymentConfigExists(path: string, fs: SetupRuntimeFileSystem): Promise<boolean> {
   let handle: SetupRuntimeFileHandle;
   try {
+    await assertCanonicalPathComponents(path, fs);
     handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return false;
@@ -695,6 +742,7 @@ export async function loadOrCreateDeploymentSecret(
   const fs = dependencies.fs ?? defaultFileSystem;
   try {
     await fs.mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+    await assertCanonicalPathComponents(directory, fs);
     await fs.chmod(directory, DIRECTORY_MODE);
   } catch {
     throw storageFailure();
@@ -710,6 +758,7 @@ export async function loadOrCreateDeploymentSecret(
   const temporaryPath = join(directory, `.${DEPLOYMENT_SECRET_FILE}.${id}`);
   let temporaryCreated = false;
   try {
+    await assertCanonicalPathComponents(temporaryPath, fs);
     await fs.writeFile(temporaryPath, `${secret}\n`, {
       encoding: "utf8",
       flag: "wx",
@@ -717,6 +766,7 @@ export async function loadOrCreateDeploymentSecret(
     });
     temporaryCreated = true;
     try {
+      await assertCanonicalPathComponents(path, fs);
       await fs.link(temporaryPath, path);
     } catch (cause) {
       if (errorCode(cause) !== "EEXIST") throw cause;
@@ -724,7 +774,7 @@ export async function loadOrCreateDeploymentSecret(
       if (winner === undefined) throw storageFailure();
       return winner;
     }
-    await fs.chmod(path, CONFIG_MODE);
+    await chmodOwnerFile(path, fs);
     return secret;
   } catch (cause) {
     if (cause instanceof SetupRuntimeError) throw cause;
@@ -779,6 +829,7 @@ async function deployWithSecretFile(
   let created = false;
   let failure: unknown;
   try {
+    await assertCanonicalPathComponents(path, fs);
     await fs.writeFile(
       path,
       `${JSON.stringify({ SHLOOK_SECRET_ENCRYPTION_KEY: encryptionKey })}\n`,
@@ -917,20 +968,22 @@ function credentialFromPending(pending: PendingServiceTokenState): ConnectionCre
 }
 
 async function removePendingServiceToken(dependencies: SetupRuntimeDependencies): Promise<void> {
+  const fs = dependencies.fs ?? defaultFileSystem;
+  const path = statePath(dependencies, PENDING_SERVICE_TOKEN_FILE);
   try {
-    await (dependencies.fs ?? defaultFileSystem).unlink(
-      statePath(dependencies, PENDING_SERVICE_TOKEN_FILE),
-    );
+    await assertCanonicalPathComponents(path, fs);
+    await fs.unlink(path);
   } catch (cause) {
     if (errorCode(cause) !== "ENOENT") throw pendingFailure();
   }
 }
 
 async function removeServiceTokenRotation(dependencies: SetupRuntimeDependencies): Promise<void> {
+  const fs = dependencies.fs ?? defaultFileSystem;
+  const path = statePath(dependencies, SERVICE_TOKEN_ROTATION_FILE);
   try {
-    await (dependencies.fs ?? defaultFileSystem).unlink(
-      statePath(dependencies, SERVICE_TOKEN_ROTATION_FILE),
-    );
+    await assertCanonicalPathComponents(path, fs);
+    await fs.unlink(path);
   } catch (cause) {
     if (errorCode(cause) !== "ENOENT") throw pendingFailure();
   }
