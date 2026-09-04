@@ -86,7 +86,14 @@ Setup stores generated runtime Access credentials in
 encryption key through a temporary Wrangler `--secrets-file`, so setup never exposes a
 route-bearing Worker without that secret. To transfer only the runtime connection, rerun apply
 with `--show-connection-token` and pipe that bearer secret to another installation without putting
-it in argv:
+it in argv. For a normal SSH or headless terminal session, run `connect` and paste the token at
+the hidden prompt:
+
+```bash
+shlook connect
+```
+
+For automation, pipe the token through standard input:
 
 ```bash
 printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json

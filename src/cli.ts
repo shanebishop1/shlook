@@ -25,6 +25,26 @@ import {
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const maximumConnectionTokenBytes = 20_000;
+
+export interface ConnectionTokenInput {
+  readonly isTTY?: boolean;
+  readonly isRaw?: boolean;
+  isPaused(): boolean;
+  on(event: "data", listener: (chunk: string | Uint8Array) => void): unknown;
+  on(event: "end", listener: () => void): unknown;
+  on(event: "error", listener: (error: unknown) => void): unknown;
+  pause(): unknown;
+  removeListener(event: "data", listener: (chunk: string | Uint8Array) => void): unknown;
+  removeListener(event: "end", listener: () => void): unknown;
+  removeListener(event: "error", listener: (error: unknown) => void): unknown;
+  resume(): unknown;
+  setRawMode?(mode: boolean): unknown;
+}
+
+export interface ConnectionTokenPrompt {
+  write(value: string): unknown;
+}
 
 export interface CliDependencies {
   cwd: string;
@@ -113,14 +133,127 @@ function resolvePinnedWrangler(): string {
   return join(dirname(packagePath), "bin", "wrangler.js");
 }
 
-async function readSecretInput(): Promise<string> {
-  if (process.stdin.isTTY) throw new Error("connection credential input is required");
-  let value = "";
-  for await (const chunk of process.stdin) {
-    value += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    if (value.length > 20_000) throw new Error("connection credential input is invalid");
-  }
-  return value.trim();
+function inputError(value: unknown): Error {
+  return value instanceof Error ? value : new Error("connection credential input failed");
+}
+
+export function readConnectionToken(
+  input: ConnectionTokenInput,
+  prompt: ConnectionTokenPrompt,
+): Promise<string> {
+  const interactive = input.isTTY === true;
+  const initiallyPaused = input.isPaused();
+  const initiallyRaw = input.isRaw === true;
+
+  return new Promise((resolve, reject) => {
+    let value = "";
+    let valueBytes = 0;
+    let settled = false;
+    let rawModeTouched = false;
+
+    const onData = (chunk: string | Uint8Array) => {
+      const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      if (!interactive) {
+        value += text;
+        valueBytes += Buffer.byteLength(text);
+        if (valueBytes > maximumConnectionTokenBytes) {
+          settle(new Error("connection credential input is invalid"));
+        }
+        return;
+      }
+
+      for (const character of text) {
+        if (character === "\u0003") {
+          settle(new Error("connection credential input cancelled"));
+          return;
+        }
+        if (character === "\r" || character === "\n") {
+          finish();
+          return;
+        }
+        if (character === "\b" || character === "\u007f") {
+          const previous = Array.from(value).at(-1);
+          if (previous !== undefined) {
+            value = value.slice(0, -previous.length);
+            valueBytes -= Buffer.byteLength(previous);
+          }
+          continue;
+        }
+        value += character;
+        valueBytes += Buffer.byteLength(character);
+        if (valueBytes > maximumConnectionTokenBytes) {
+          settle(new Error("connection credential input is invalid"));
+          return;
+        }
+      }
+    };
+    const onEnd = () => finish();
+    const onError = (error: unknown) => settle(inputError(error));
+
+    const cleanup = (): Error | undefined => {
+      let cleanupError: Error | undefined;
+      const attempt = (operation: () => unknown) => {
+        try {
+          operation();
+        } catch (cause) {
+          cleanupError ??= inputError(cause);
+        }
+      };
+      attempt(() => input.removeListener("data", onData));
+      attempt(() => input.removeListener("end", onEnd));
+      attempt(() => input.removeListener("error", onError));
+      if (interactive && rawModeTouched) {
+        attempt(() => input.setRawMode?.(initiallyRaw));
+      }
+      if (initiallyPaused) attempt(() => input.pause());
+      return cleanupError;
+    };
+
+    function settle(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      const cleanupError = cleanup();
+      if (interactive) {
+        try {
+          prompt.write("\n");
+        } catch (cause) {
+          if (error === undefined) error = inputError(cause);
+        }
+      }
+      error ??= cleanupError;
+      if (error === undefined) resolve(value.trim());
+      else reject(error);
+    }
+
+    function finish(): void {
+      if (value.trim() === "") {
+        settle(new Error("connection credential input is required"));
+      } else {
+        settle();
+      }
+    }
+
+    try {
+      input.on("data", onData);
+      input.on("end", onEnd);
+      input.on("error", onError);
+      if (interactive) {
+        if (input.setRawMode === undefined) {
+          throw new Error("connection credential input is unavailable");
+        }
+        rawModeTouched = true;
+        input.setRawMode(true);
+      }
+      input.resume();
+      if (interactive) prompt.write("Connection token: ");
+    } catch (cause) {
+      settle(inputError(cause));
+    }
+  });
+}
+
+function readSecretInput(): Promise<string> {
+  return readConnectionToken(process.stdin, process.stderr);
 }
 
 function defaults(): CliDependencies {

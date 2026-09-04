@@ -7,7 +7,7 @@ Use `--json` for agent-consumed calls. Success uses
 ```text
 shlook auth check --json
 shlook setup (--plan | --apply) [--domain <domain>] [--owner-email <email>] [--account-id <id>] [--adopt-existing] [--show-connection-token] --json
-printf '%s\n' '<connection-token>' | shlook connect --json
+shlook connect
 shlook status --json
 shlook publish <path> --name <short-name> [--description <text>] [--entrypoint <relative-path>] --json
 shlook list [--offset <n>] --json
@@ -30,8 +30,11 @@ fresh setup and manifest-backed reruns do not need it. Apply deploys and verifie
 stores the runtime connection.
 
 `connect` is deliberately separate from provisioning. Its token contains only the domain and
-Access service-token credentials, is a bearer secret, and must be supplied through non-TTY stdin,
-never as an argv value. It verifies owner health before replacing the stored connection.
+Access service-token credentials and is a bearer secret. In a normal SSH or headless terminal,
+run plain `shlook connect` and paste the token at the hidden prompt. For automation, pipe it
+through standard input, for example
+`printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json`. Never supply it as an argv
+value. The command verifies owner health before replacing the stored connection.
 
 For normal commands, any of `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `SHLOOK_DOMAIN`,
 or the four explicit origin variables selects the existing environment-profile behavior. A

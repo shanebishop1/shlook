@@ -94,8 +94,14 @@ verified and stored; inspect paths and metadata only, never print secret-bearing
 The generated Access service token lasts exactly 90 days (2160 hours) and is artifact/runtime
 authentication only; it cannot provision Cloudflare. Apply stores it automatically and omits a
 transferable token from normal output. Use `--show-connection-token` only when a second
-installation needs to connect, treat the result as a bearer secret, and deliver it through stdin
-rather than argv:
+installation needs to connect and treat the result as a bearer secret. In a normal SSH or
+headless terminal, run the command and paste the token at its hidden prompt:
+
+```bash
+shlook connect
+```
+
+For automation, pipe the token through standard input. Never place it in argv:
 
 ```bash
 printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json
