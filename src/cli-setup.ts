@@ -66,7 +66,7 @@ export interface PendingServiceToken {
 export interface SetupPersistence {
   saveIntent(manifest: SetupDeploymentManifest): Promise<void>;
   saveResource(resource: SetupResourceKey, id: string): Promise<void>;
-  beginServiceTokenRotation(resourceId: string): Promise<void>;
+  beginServiceTokenRotation(resourceId: string, clientId: string): Promise<void>;
   saveServiceToken(token: PendingServiceToken): Promise<void>;
 }
 
@@ -93,6 +93,8 @@ export interface ApplySetupInput extends SetupInput {
   existingServiceToken?: ExistingServiceTokenCredentials;
   /** Runtime-only journal signal used to resume an interrupted secret rotation. */
   serviceTokenRotationPending?: boolean;
+  /** Runtime-only signal that a journaled rotation already persisted its new secret. */
+  serviceTokenRotationCompleted?: boolean;
   persistence?: SetupPersistence;
 }
 
@@ -449,6 +451,22 @@ function expectedResource(
       return;
     }
     if (
+      [
+        "d1",
+        "r2",
+        "access_application_owner",
+        "access_application_private",
+        "access_email_policy_owner",
+        "access_email_policy_private",
+        "access_service_token_policy_owner",
+        "access_service_token_policy_private",
+      ].includes(key) &&
+      expected.action === "create" &&
+      Object.keys(expected).length === 2
+    ) {
+      return;
+    }
+    if (
       !discoverCreatedWorkersResources ||
       expected.action !== "create" ||
       !key.startsWith("workers_domain_")
@@ -457,6 +475,16 @@ function expectedResource(
     return;
   }
   if (expected.id !== existing.id) manifestMismatch();
+}
+
+function interruptedResourceCreate(input: SetupInput, key: SetupResourceKey): boolean {
+  const expected = input.deploymentManifest?.resources[key];
+  return (
+    expected !== undefined &&
+    expected.action === "create" &&
+    expected.id === undefined &&
+    Object.keys(expected).length === 2
+  );
 }
 
 function intent(
@@ -1908,6 +1936,8 @@ export async function applySetup(
     serviceTokenIntent.id === undefined &&
     Object.keys(serviceTokenIntent).length === 2;
   const rotationRecovery = input.serviceTokenRotationPending === true;
+  const rotationCompleted = input.serviceTokenRotationCompleted === true;
+  if (rotationRecovery && rotationCompleted) manifestMismatch();
   if (
     rotationRecovery &&
     (state.accessServiceToken === undefined ||
@@ -1916,9 +1946,20 @@ export async function applySetup(
   ) {
     manifestMismatch();
   }
+  if (
+    rotationCompleted &&
+    (state.accessServiceToken === undefined ||
+      serviceTokenIntent === undefined ||
+      serviceTokenIntent.id !== state.accessServiceToken.id ||
+      input.existingServiceToken === undefined ||
+      input.existingServiceToken.clientId !== state.accessServiceToken.clientId)
+  ) {
+    manifestMismatch();
+  }
   const renewal =
     state.accessServiceToken?.nearExpiry === true &&
-    serviceTokenIntent?.id === state.accessServiceToken.id;
+    serviceTokenIntent?.id === state.accessServiceToken.id &&
+    !rotationCompleted;
   const ownedCreateSecretRecovery =
     state.accessServiceToken !== undefined &&
     serviceTokenIntent?.action === "create" &&
@@ -1955,12 +1996,16 @@ export async function applySetup(
   const accountId = plan.account.id;
   const d1: AppliedResource =
     state.d1 === undefined ? await createD1(client, accountId) : { ...state.d1, created: false };
-  if (d1.created) await persistSetupState(() => persistence.saveResource("d1", d1.id));
+  if (d1.created || interruptedResourceCreate(input, "d1")) {
+    await persistSetupState(() => persistence.saveResource("d1", d1.id));
+  }
   const r2: AppliedResource =
     state.r2 === undefined
       ? await createR2(client, accountId)
       : { id: state.r2.name, name: state.r2.name, created: false };
-  if (r2.created) await persistSetupState(() => persistence.saveResource("r2", r2.id));
+  if (r2.created || interruptedResourceCreate(input, "r2")) {
+    await persistSetupState(() => persistence.saveResource("r2", r2.id));
+  }
 
   const accessApplications = {} as Record<SetupSurface, AppliedAccessApplication>;
   for (const surface of ["owner", "private"] as const) {
@@ -1969,12 +2014,10 @@ export async function applySetup(
       existing === undefined
         ? await createApplication(client, accountId, surface, normalized.origins[surface])
         : { ...existing, created: false };
-    if (accessApplications[surface].created) {
+    const applicationKey = resourceKey("access_application", surface);
+    if (accessApplications[surface].created || interruptedResourceCreate(input, applicationKey)) {
       await persistSetupState(() =>
-        persistence.saveResource(
-          resourceKey("access_application", surface),
-          accessApplications[surface].id,
-        ),
+        persistence.saveResource(applicationKey, accessApplications[surface].id),
       );
     }
   }
@@ -1997,7 +2040,10 @@ export async function applySetup(
       );
     }
     await persistSetupState(() =>
-      persistence.beginServiceTokenRotation(state.accessServiceToken!.id),
+      persistence.beginServiceTokenRotation(
+        state.accessServiceToken!.id,
+        state.accessServiceToken!.clientId,
+      ),
     );
     if (renewal) await updateServiceTokenDuration(client, accountId, state.accessServiceToken);
     const rotated = await rotateServiceToken(client, accountId, state.accessServiceToken, (token) =>
@@ -2028,10 +2074,9 @@ export async function applySetup(
             [{ email: { email: normalized.ownerEmail } }],
           )
         : { ...existing.email, created: false };
-    if (email.created) {
-      await persistSetupState(() =>
-        persistence.saveResource(resourceKey("access_email_policy", surface), email.id),
-      );
+    const emailPolicyKey = resourceKey("access_email_policy", surface);
+    if (email.created || interruptedResourceCreate(input, emailPolicyKey)) {
+      await persistSetupState(() => persistence.saveResource(emailPolicyKey, email.id));
     }
     const serviceToken =
       existing?.serviceToken === undefined
@@ -2044,12 +2089,10 @@ export async function applySetup(
             [{ service_token: { token_id: accessServiceToken.id } }],
           )
         : { ...existing.serviceToken, created: false };
-    if (serviceToken.created) {
+    const serviceTokenPolicyKey = resourceKey("access_service_token_policy", surface);
+    if (serviceToken.created || interruptedResourceCreate(input, serviceTokenPolicyKey)) {
       await persistSetupState(() =>
-        persistence.saveResource(
-          resourceKey("access_service_token_policy", surface),
-          serviceToken.id,
-        ),
+        persistence.saveResource(serviceTokenPolicyKey, serviceToken.id),
       );
     }
     accessPolicies[surface] = { email, serviceToken };

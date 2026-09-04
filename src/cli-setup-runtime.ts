@@ -1,4 +1,9 @@
-import { randomBytes as nodeRandomBytes, randomUUID } from "node:crypto";
+import {
+  createHash,
+  randomBytes as nodeRandomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, link, mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -345,6 +350,9 @@ interface ServiceTokenRotationState {
   accountId: string;
   zoneId: string;
   resourceId: string;
+  clientId: string;
+  manifestAction: "create" | "adopt";
+  priorClientSecretHash?: string;
 }
 
 function manifestFailure(): SetupRuntimeError {
@@ -597,11 +605,31 @@ function parseServiceTokenRotation(raw: string): ServiceTokenRotationState {
   }
   if (
     !isRecord(value) ||
-    Object.keys(value).length !== 6 ||
+    ![8, 9].includes(Object.keys(value).length) ||
+    Object.keys(value).some(
+      (key) =>
+        ![
+          "version",
+          "domain",
+          "ownerEmail",
+          "accountId",
+          "zoneId",
+          "resourceId",
+          "clientId",
+          "manifestAction",
+          "priorClientSecretHash",
+        ].includes(key),
+    ) ||
     value.version !== 1 ||
-    !["domain", "ownerEmail", "accountId", "zoneId", "resourceId"].every(
+    !["domain", "ownerEmail", "accountId", "zoneId", "resourceId", "clientId"].every(
       (key) => typeof value[key] === "string" && (value[key] as string).length > 0,
     ) ||
+    !["create", "adopt"].includes(String(value.manifestAction)) ||
+    (value.priorClientSecretHash === undefined
+      ? Object.keys(value).length !== 8
+      : Object.keys(value).length !== 9 ||
+        typeof value.priorClientSecretHash !== "string" ||
+        !/^[0-9a-f]{64}$/.test(value.priorClientSecretHash)) ||
     Object.values(value).some((entry) => typeof entry === "string" && entry.length > 4096)
   ) {
     throw pendingFailure();
@@ -919,13 +947,11 @@ async function verifyDeployment(
 }
 
 async function storedCredential(
-  input: SetupInput,
   dependencies: SetupRuntimeDependencies,
 ): Promise<ConnectionCredential | undefined> {
   if (dependencies.loadConnection === undefined) return undefined;
   try {
-    const credential = await dependencies.loadConnection();
-    return credential.domain === input.domain ? credential : undefined;
+    return await dependencies.loadConnection();
   } catch {
     return undefined;
   }
@@ -1037,15 +1063,61 @@ function assertRotationMatchesManifest(
   rotation: ServiceTokenRotationState,
   manifest: SetupDeploymentManifest,
 ): void {
+  const serviceToken = manifest.resources.access_service_token;
   if (
     rotation.domain !== manifest.domain ||
     rotation.ownerEmail !== manifest.ownerEmail ||
     rotation.accountId !== manifest.accountId ||
     rotation.zoneId !== manifest.zoneId ||
-    manifest.resources.access_service_token.id !== rotation.resourceId
+    serviceToken.id !== rotation.resourceId ||
+    serviceToken.name !== "shlook" ||
+    serviceToken.action !== rotation.manifestAction ||
+    Object.keys(serviceToken).length !== 3
   ) {
     throw pendingFailure();
   }
+}
+
+function credentialSecretHash(secret: string): string {
+  return createHash("sha256").update(secret, "utf8").digest("hex");
+}
+
+function matchesSecretHash(secret: string, expectedHash: string): boolean {
+  const actual = Buffer.from(credentialSecretHash(secret), "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.byteLength === expected.byteLength && timingSafeEqual(actual, expected);
+}
+
+function assertRotationCredentialTransition(
+  rotation: ServiceTokenRotationState,
+  pending: PendingServiceTokenState | undefined,
+  stored: ConnectionCredential | undefined,
+): void {
+  const pendingCredential = pending === undefined ? undefined : credentialFromPending(pending);
+  if (
+    pending !== undefined &&
+    (pending.resourceId !== rotation.resourceId || pending.clientId !== rotation.clientId)
+  ) {
+    throw pendingFailure();
+  }
+  if (
+    stored !== undefined &&
+    pendingCredential !== undefined &&
+    sameCredential(stored, pendingCredential)
+  ) {
+    return;
+  }
+  if (
+    stored !== undefined &&
+    rotation.priorClientSecretHash !== undefined &&
+    stored.domain === rotation.domain &&
+    stored.accessClientId === rotation.clientId &&
+    matchesSecretHash(stored.accessClientSecret, rotation.priorClientSecretHash)
+  ) {
+    return;
+  }
+  if (stored === undefined && rotation.priorClientSecretHash === undefined) return;
+  throw pendingFailure();
 }
 
 async function verifiedPersistedConnection(
@@ -1071,14 +1143,15 @@ export async function applySetupRuntime(
   input: SetupRuntimeInput,
   dependencies: SetupRuntimeDependencies,
 ): Promise<SetupRuntimeResult> {
-  const existing = await storedCredential(input, dependencies);
+  const stored = await storedCredential(dependencies);
+  const existing = stored?.domain === input.domain ? stored : undefined;
   let manifest = await loadDeploymentManifest(dependencies);
   let pending = await loadPendingServiceToken(dependencies);
   let rotation = await loadServiceTokenRotation(dependencies);
   if (rotation !== undefined) {
     if (manifest === undefined) throw pendingFailure();
     assertRotationMatchesManifest(rotation, manifest);
-    if (pending !== undefined && pending.resourceId !== rotation.resourceId) throw pendingFailure();
+    assertRotationCredentialTransition(rotation, pending, stored);
   }
   const mayCreateDeploymentSecret =
     manifest === undefined ||
@@ -1089,7 +1162,11 @@ export async function applySetupRuntime(
     if (manifest === undefined) throw pendingFailure();
     assertPendingMatchesManifest(pending, manifest);
     const pendingCredential = credentialFromPending(pending);
-    if (existing !== undefined && !sameCredential(existing, pendingCredential)) {
+    if (
+      rotation === undefined &&
+      existing !== undefined &&
+      !sameCredential(existing, pendingCredential)
+    ) {
       throw pendingFailure();
     }
     if (manifest.resources.access_service_token.id === undefined) {
@@ -1130,6 +1207,9 @@ export async function applySetupRuntime(
       ...(rotation !== undefined && pending === undefined
         ? { serviceTokenRotationPending: true }
         : {}),
+      ...(rotation !== undefined && pending !== undefined
+        ? { serviceTokenRotationCompleted: true }
+        : {}),
       persistence: {
         saveIntent: async (nextManifest) => {
           if (manifest !== undefined && JSON.stringify(manifest) !== JSON.stringify(nextManifest)) {
@@ -1149,8 +1229,14 @@ export async function applySetupRuntime(
           };
           await saveDeploymentManifest(manifest, dependencies);
         },
-        beginServiceTokenRotation: async (resourceId) => {
+        beginServiceTokenRotation: async (resourceId, clientId) => {
           if (manifest === undefined || manifest.resources.access_service_token.id !== resourceId) {
+            throw pendingFailure();
+          }
+          if (
+            stored !== undefined &&
+            (stored.domain !== manifest.domain || stored.accessClientId !== clientId)
+          ) {
             throw pendingFailure();
           }
           const nextRotation: ServiceTokenRotationState = {
@@ -1160,13 +1246,21 @@ export async function applySetupRuntime(
             accountId: manifest.accountId,
             zoneId: manifest.zoneId,
             resourceId,
+            clientId,
+            manifestAction: manifest.resources.access_service_token.action,
+            ...(stored === undefined
+              ? {}
+              : { priorClientSecretHash: credentialSecretHash(stored.accessClientSecret) }),
           };
           await saveServiceTokenRotation(nextRotation, dependencies);
           rotation = nextRotation;
         },
         saveServiceToken: async (token) => {
           if (manifest === undefined) throw pendingFailure();
-          if (rotation !== undefined && rotation.resourceId !== token.resourceId) {
+          if (
+            rotation !== undefined &&
+            (rotation.resourceId !== token.resourceId || rotation.clientId !== token.clientId)
+          ) {
             throw pendingFailure();
           }
           pending = {
@@ -1211,8 +1305,8 @@ export async function applySetupRuntime(
   await verifyDeployment(result, credential, dependencies);
 
   const connectionPath = await verifiedPersistedConnection(credential, dependencies);
-  if (pending !== undefined) await removePendingServiceToken(dependencies);
   if (rotation !== undefined) await removeServiceTokenRotation(dependencies);
+  if (pending !== undefined) await removePendingServiceToken(dependencies);
 
   return {
     mode: "apply",

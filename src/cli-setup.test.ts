@@ -721,7 +721,7 @@ test("rejects expired service tokens and renews manifest-owned near-expiry token
     nearExpiry.dependencies,
   );
   expect(renewed).toBe(true);
-  expect(statePersistence.beginServiceTokenRotation).toHaveBeenCalledWith("token-id");
+  expect(statePersistence.beginServiceTokenRotation).toHaveBeenCalledWith("token-id", "client-id");
   expect(statePersistence.saveServiceToken).toHaveBeenCalledWith({
     resourceId: "token-id",
     clientId: "client-id",
@@ -738,6 +738,44 @@ test("rejects expired service tokens and renews manifest-owned near-expiry token
     ["PUT", `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens/token-id`],
     ["POST", `/client/v4/accounts/${ACCOUNT_ID}/access/service_tokens/token-id/rotate`],
   ]);
+});
+
+test("does not rotate again when a journaled renewal already persisted its new secret", async () => {
+  const context = harness(({ url }) => {
+    if (url.pathname.endsWith("/access/service_tokens")) {
+      return page([
+        {
+          id: "token-id",
+          name: "shlook",
+          client_id: "client-id",
+          enabled: true,
+          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        },
+      ]);
+    }
+    return existingStateResponse(url);
+  });
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+  context.requests.length = 0;
+
+  const result = await applySetup(
+    {
+      ...input,
+      deploymentManifest: plan.deploymentManifest,
+      existingServiceToken: { clientId: "client-id", clientSecret: "rotated-secret" },
+      serviceTokenRotationCompleted: true,
+      persistence: persistence(),
+    },
+    context.dependencies,
+  );
+
+  expect(result.resources.accessServiceToken).toMatchObject({
+    id: "token-id",
+    clientId: "client-id",
+    created: false,
+  });
+  expect(result.createdServiceTokenCredentials).toBeUndefined();
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
 });
 
 test("recovers a lost service-token create response from exact persisted create intent", async () => {
@@ -846,6 +884,151 @@ test("recovers a lost service-token create response from exact persisted create 
   expect(
     context.requests.filter((request) => request.url.pathname.endsWith("/token-id/rotate")),
   ).toHaveLength(1);
+});
+
+test.each(["lost create response", "lost state write"] as const)(
+  "recovers an interrupted D1 creation after a %s",
+  async (failureMode) => {
+    let remoteD1Exists = false;
+    let failD1StateWrite = failureMode === "lost state write";
+    let persistedManifest: SetupDeploymentManifest | undefined;
+    const context = harness(({ url, method, body }) => {
+      if (url.pathname.endsWith("/d1/database")) {
+        if (method === "GET") {
+          return page(remoteD1Exists ? [{ uuid: "database-id", name: "shlook" }] : []);
+        }
+        expect(body).toEqual({ name: "shlook" });
+        remoteD1Exists = true;
+        if (failureMode === "lost create response") {
+          throw new Error("response lost after provider create");
+        }
+        return envelope({ uuid: "database-id", name: "shlook" }, { status: 201 });
+      }
+      return existingStateResponse(url);
+    });
+    const initialPlan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+    expect(initialPlan.deploymentManifest.resources.d1).toEqual({
+      action: "create",
+      name: "shlook",
+    });
+    const statePersistence = persistence({
+      saveIntent: vi.fn(async (manifest) => {
+        persistedManifest = manifest;
+      }),
+      saveResource: vi.fn(async (resource: SetupResourceKey, id: string) => {
+        if (resource === "d1" && failD1StateWrite) {
+          failD1StateWrite = false;
+          throw new Error("state write lost after provider create");
+        }
+        if (persistedManifest === undefined) throw new Error("manifest missing");
+        persistedManifest = {
+          ...persistedManifest,
+          resources: {
+            ...persistedManifest.resources,
+            [resource]: { ...persistedManifest.resources[resource], id },
+          },
+        };
+      }),
+    });
+
+    await expect(
+      applySetup(
+        {
+          ...input,
+          deploymentManifest: initialPlan.deploymentManifest,
+          existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+          persistence: statePersistence,
+        },
+        context.dependencies,
+      ),
+    ).rejects.toMatchObject({
+      code:
+        failureMode === "lost create response"
+          ? "cloudflare_request_failed"
+          : "setup_state_persistence_failed",
+    });
+    expect(persistedManifest?.resources.d1.id).toBeUndefined();
+
+    await applySetup(
+      {
+        ...input,
+        deploymentManifest: persistedManifest!,
+        existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+        persistence: statePersistence,
+      },
+      context.dependencies,
+    );
+
+    expect(persistedManifest?.resources.d1.id).toBe("database-id");
+    expect(
+      context.requests.filter(
+        (request) => request.method === "POST" && request.url.pathname.endsWith("/d1/database"),
+      ),
+    ).toHaveLength(1);
+  },
+);
+
+test.each([
+  ["r2", "shlook-assets"],
+  ["access_application_owner", "owner-app-id"],
+  ["access_email_policy_owner", "owner-email-policy-id"],
+  ["access_service_token_policy_private", "private-token-policy-id"],
+] as const)(
+  "persists a uniquely discovered exact %s interrupted-create resource before continuing",
+  async (resource, id) => {
+    const context = harness(({ url }) => existingStateResponse(url));
+    const adopted = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+    const interrupted: SetupDeploymentManifest = {
+      ...adopted.deploymentManifest,
+      resources: {
+        ...adopted.deploymentManifest.resources,
+        [resource]: {
+          action: "create",
+          name: adopted.deploymentManifest.resources[resource].name,
+        },
+      },
+    };
+    const statePersistence = persistence();
+
+    await applySetup(
+      {
+        ...input,
+        deploymentManifest: interrupted,
+        existingServiceToken: { clientId: "client-id", clientSecret: "known-secret" },
+        persistence: statePersistence,
+      },
+      context.dependencies,
+    );
+
+    expect(statePersistence.saveResource).toHaveBeenCalledWith(resource, id);
+    expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+  },
+);
+
+test("rejects a mismatched resource despite persisted create-without-ID intent", async () => {
+  const absent = harness();
+  const initial = await planSetup(input, absent.dependencies);
+  const mismatched = harness(({ url }) => {
+    if (url.pathname.endsWith("/access/apps")) {
+      return page([
+        {
+          id: "attacker-app-id",
+          name: "shlook-owner",
+          domain: "attacker.example.net",
+          type: "self_hosted",
+        },
+      ]);
+    }
+    return baseResponse(url);
+  });
+
+  await expect(
+    applySetup(
+      { ...input, deploymentManifest: initial.deploymentManifest, persistence: persistence() },
+      mismatched.dependencies,
+    ),
+  ).rejects.toMatchObject({ code: "setup_resource_conflict" });
+  expect(mismatched.requests.every((request) => request.method === "GET")).toBe(true);
 });
 
 test("a failed pending save returns a stable recovery error and reruns the rotation", async () => {
