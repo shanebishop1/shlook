@@ -178,6 +178,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain('href="https://github.com/shanebishop1/shlook"');
     expect(body).toContain('aria-label="shlook on GitHub"');
     expect(body).toContain('href="https://owner.example.com/" aria-label="shlook home"');
+    expect(body).toContain(".brand{color:inherit;text-decoration:none}");
     expect(body).toContain("localStorage.getItem('shlook-theme')");
     expect(body).toContain("Shane Bishop");
     expect(body).toContain("2026");
