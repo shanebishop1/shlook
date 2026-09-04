@@ -78,17 +78,17 @@ jobs:
           test -f "$package/dist/cli-setup-runtime.js"
           test -f "$package/dist/cli-connection.js"
 
-          if "$cli" setup --json > "$RUNNER_TEMP/setup-parser.json"; then
+          if "$cli" setup --json 2> "$RUNNER_TEMP/setup-parser.json"; then
             exit 1
           fi
           node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="setup"||value.error?.code!=="usage_error") process.exit(1)' "$RUNNER_TEMP/setup-parser.json"
 
-          if env -u CLOUDFLARE_API_TOKEN -u SHLOOK_CF_TOKEN "$cli" setup --plan --domain example.com --owner-email owner@example.com --json > "$RUNNER_TEMP/setup-validation.json"; then
+          if env -u CLOUDFLARE_API_TOKEN -u SHLOOK_CF_TOKEN "$cli" setup --plan --domain example.com --owner-email owner@example.com --json 2> "$RUNNER_TEMP/setup-validation.json"; then
             exit 1
           fi
           node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="setup"||value.error?.code!=="bootstrap_token_required") process.exit(1)' "$RUNNER_TEMP/setup-validation.json"
 
-          if printf 'invalid\n' | "$cli" connect --json > "$RUNNER_TEMP/connect-validation.json"; then
+          if printf 'invalid\n' | "$cli" connect --json 2> "$RUNNER_TEMP/connect-validation.json"; then
             exit 1
           fi
           node -e 'const value=require(process.argv[1]); if(value.ok||value.command!=="connect"||value.error?.code!=="invalid_connection_credential") process.exit(1)' "$RUNNER_TEMP/connect-validation.json"
