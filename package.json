@@ -40,6 +40,7 @@
     "build:worker": "wrangler deploy --dry-run --outdir /tmp/shlook-worker",
     "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test",
     "ci": "pnpm check && pnpm build",
+    "deploy": "wrangler deploy --config .wrangler.deploy.jsonc",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint src",

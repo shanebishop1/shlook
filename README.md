@@ -106,6 +106,28 @@ origin variables for a nonstandard topology. See
 [`skills/shlook/references/setup.md`](skills/shlook/references/setup.md) for details and the
 manual no-domain deployment.
 
+## Wrangler configuration
+
+The tracked `wrangler.jsonc` is a placeholder template (`example.com` origins, zeroed
+database ID). It is safe to commit and is what `pnpm run ci` uses for its Wrangler dry-run
+build. Real per-operator values are never committed: each operator supplies their own
+account ID, database ID, hostnames, owner email, and secrets.
+
+Manual deploys use the gitignored local `.wrangler.deploy.jsonc` (same shape as
+`examples/wrangler.custom-domains.jsonc`, but with your real values):
+
+```bash
+pnpm deploy
+```
+
+`shlook setup` instead generates its own config at
+`${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json` and deploys from there,
+so manual config is only needed if you deploy without setup.
+
+Never commit real account or database IDs, owner emails, or secrets. `SHLOOK_SECRET_ENCRYPTION_KEY`
+is supplied via setup's temporary secrets file or `wrangler secret put`, never via `vars`.
+Local notes in `docs/` are also gitignored and never committed.
+
 ## Publish an artifact
 
 Every new publication has a concise display name and may have a description:
