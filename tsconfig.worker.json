@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/*.ts", "src/worker/**/*.ts", "src/ui/**/*.ts", "test/env.d.ts"],
+  "exclude": ["src/cli*.ts", "src/cli/**/*.ts"]
+}
