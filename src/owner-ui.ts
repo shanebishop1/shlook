@@ -1,1 +1,1 @@
-export { ownerFavicon, ownerPage } from "./ui/index";
+export { ownerFavicon, ownerPage } from "./worker/owner-ui.js";

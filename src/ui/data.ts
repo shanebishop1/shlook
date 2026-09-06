@@ -1,5 +1,5 @@
-import { hashSecret } from "../privacy";
-import { decryptSecret } from "../secret-crypto";
+import { hashSecret } from "../worker/privacy";
+import { decryptSecret } from "../worker/secret-crypto";
 import type { OwnerAsset, OwnerAssetRow } from "./types";
 
 export const pageSize = 24;
