@@ -1,8 +1,14 @@
 import { constants } from "node:fs";
 import { chmod, mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, parse as parsePath } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+import {
+  assertCanonicalPathComponents,
+  atomicReplaceOwnerFile,
+  safeAbsoluteBasePath,
+} from "./cli/storage/owner-files.ts";
 
 const tokenPrefix = "shlook_connect_v1_";
 const credentialKeys = ["domain", "accessClientId", "accessClientSecret"] as const;
@@ -68,46 +74,6 @@ const defaultFileSystem: ConnectionFileSystem = {
 
 function invalidCredential(): Error {
   return new Error("invalid connection credential");
-}
-
-function errorCode(cause: unknown): string | undefined {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(cause, "code");
-  return descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "string"
-    ? descriptor.value
-    : undefined;
-}
-
-async function assertCanonicalPathComponents(
-  path: string,
-  fs: ConnectionFileSystem,
-): Promise<void> {
-  const root = parsePath(path).root;
-  let existingPath = path;
-  for (;;) {
-    try {
-      if ((await fs.realpath(existingPath)) !== existingPath) {
-        throw new Error("unsafe connection credential path");
-      }
-      return;
-    } catch (cause) {
-      if (errorCode(cause) !== "ENOENT" || existingPath === root) throw cause;
-      existingPath = dirname(existingPath);
-    }
-  }
-}
-
-async function chmodConnectionFile(path: string, fs: ConnectionFileSystem): Promise<void> {
-  await assertCanonicalPathComponents(path, fs);
-  const handle = await fs.open(
-    path,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
-  try {
-    await handle.chmod(0o600);
-  } finally {
-    await handle.close();
-  }
 }
 
 export function assertConnectionCredentialStorageSupported(
@@ -194,16 +160,6 @@ export function decodeConnectionCredential(token: string): ConnectionCredential 
   }
 }
 
-function safeBasePath(value: string): string {
-  if (value.includes("\0") || !isAbsolute(value)) throw new Error("invalid connection auth path");
-  const normalized = normalize(value);
-  const withoutTrailingSeparators = value.replace(/[\\/]+$/, "") || parsePath(value).root;
-  if (normalized !== withoutTrailingSeparators || normalized === parsePath(normalized).root) {
-    throw new Error("invalid connection auth path");
-  }
-  return normalized;
-}
-
 export function resolveConnectionAuthPath(dependencies: ConnectionDependencies = {}): string {
   const env = dependencies.env ?? process.env;
   const xdgDescriptor = Object.getOwnPropertyDescriptor(env, "XDG_CONFIG_HOME");
@@ -215,8 +171,11 @@ export function resolveConnectionAuthPath(dependencies: ConnectionDependencies =
       : undefined;
   const base =
     xdg === undefined || xdg === ""
-      ? join(safeBasePath((dependencies.home ?? homedir)()), ".config")
-      : safeBasePath(xdg);
+      ? join(
+          safeAbsoluteBasePath((dependencies.home ?? homedir)(), "invalid connection auth path"),
+          ".config",
+        )
+      : safeAbsoluteBasePath(xdg, "invalid connection auth path");
   return join(base, "shlook", "auth.json");
 }
 
@@ -224,40 +183,30 @@ export async function persistConnectionCredential(
   value: ConnectionCredential,
   dependencies: ConnectionDependencies = {},
 ): Promise<string> {
-  let temporaryPath: string | undefined;
-  let fs: ConnectionFileSystem | undefined;
-
   try {
     assertConnectionCredentialStorageSupported(dependencies);
     const credential = validateCredential(value);
     const path = resolveConnectionAuthPath(dependencies);
-    fs = dependencies.fs ?? defaultFileSystem;
+    const fs = dependencies.fs ?? defaultFileSystem;
     const randomId = (dependencies.randomId ?? randomUUID)();
     if (!/^[A-Za-z0-9-]{1,64}$/.test(randomId)) {
       throw new Error("invalid temporary credential path");
     }
     const directory = dirname(path);
-    temporaryPath = join(directory, `.auth.json.${randomId}`);
+    const temporaryPath = join(directory, `.auth.json.${randomId}`);
 
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    await assertCanonicalPathComponents(directory, fs);
-    await fs.writeFile(temporaryPath, `${credentialJson(credential)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
+    await atomicReplaceOwnerFile({
+      path,
+      temporaryPath,
+      data: () => `${credentialJson(credential)}\n`,
+      fs,
+      unsafePathMessage: "unsafe connection credential path",
+      enforceDirectoryMode: false,
+      validateTemporaryPath: false,
+      cleanup: "always-on-failure",
     });
-    await assertCanonicalPathComponents(path, fs);
-    await fs.rename(temporaryPath, path);
-    await chmodConnectionFile(path, fs);
     return path;
   } catch {
-    if (fs !== undefined && temporaryPath !== undefined) {
-      try {
-        await fs.unlink(temporaryPath);
-      } catch {
-        // The temporary file may not have been created or may already have been renamed.
-      }
-    }
     throw new Error("unable to persist connection credential");
   }
 }
@@ -269,7 +218,7 @@ export async function loadConnectionCredential(
     const uid = assertConnectionCredentialStorageSupported(dependencies);
     const path = resolveConnectionAuthPath(dependencies);
     const fs = dependencies.fs ?? defaultFileSystem;
-    await assertCanonicalPathComponents(path, fs);
+    await assertCanonicalPathComponents(path, fs, "unsafe connection credential path");
     const handle = await fs.open(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
