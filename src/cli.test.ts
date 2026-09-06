@@ -637,6 +637,10 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
     description: "Owner archive refinement",
   });
   const finalize = fetch.mock.calls.find(([url]) => String(url).endsWith("/finalize"));
+  const upload = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
+  expect(new Headers(upload?.[1]?.headers).get("content-length")).toBe(
+    String(new TextEncoder().encode("<!doctype html><h1>safe</h1>").byteLength),
+  );
   expect(JSON.parse(String(finalize?.[1]?.body))).toEqual({
     entrypoint: "index.html",
     files: [{ path: "index.html", uploadId }],

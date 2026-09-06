@@ -80,7 +80,10 @@ export function uploadFile(
 ): Promise<Response> {
   return request(`/api/assets/${id}/files/${pathname}`, {
     method: "PUT",
-    headers: { "content-type": contentType },
+    headers: {
+      "content-type": contentType,
+      "content-length": String(new TextEncoder().encode(body).byteLength),
+    },
     body,
   });
 }

@@ -25,6 +25,7 @@
     "src/privacy.ts",
     "src/request.ts",
     "src/secret-crypto.ts",
+    "src/upload-limits.ts",
     "src/worker",
     "src/ui",
     "wrangler.jsonc",
@@ -47,9 +48,9 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint src",
     "prepack": "pnpm build:cli",
-    "test": "vitest run",
+    "test": "vitest run && node --test src/cli-files.node-check.ts",
     "typecheck": "pnpm typecheck:worker && pnpm typecheck:cli",
-    "typecheck:cli": "tsc --noEmit --strict --skipLibCheck --allowImportingTsExtensions --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types node,vitest src/cli-files.ts src/cli-connection.ts src/cli-setup.ts src/cli-setup-runtime.ts src/cli/*.ts src/cli.ts src/cli-connection.test.ts src/cli-setup.test.ts src/cli-setup-runtime.test.ts src/cli.test.ts",
+    "typecheck:cli": "tsc --noEmit --strict --skipLibCheck --allowImportingTsExtensions --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types node,vitest src/cli-files.ts src/cli-connection.ts src/cli-setup.ts src/cli-setup-runtime.ts src/cli/*.ts src/cli.ts src/cli-files.node-check.ts src/cli-connection.test.ts src/cli-setup.test.ts src/cli-setup-runtime.test.ts src/cli.test.ts",
     "typecheck:worker": "tsc --noEmit --strict --skipLibCheck --target ES2022 --lib ES2022 --module ESNext --moduleResolution Bundler --types @cloudflare/workers-types,@cloudflare/vitest-plugin/types src/artifact.ts src/asset-store.ts src/cleanup.ts src/index.ts src/owner-ui.ts src/privacy.ts src/request.ts src/secret-crypto.ts src/worker/*.ts src/ui/*.ts src/ui/styles/*.ts src/test-harness.ts src/bootstrap.test.ts src/index.test.ts src/secret-crypto.test.ts test/env.d.ts"
   },
   "dependencies": {

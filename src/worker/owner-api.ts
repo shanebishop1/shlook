@@ -6,8 +6,8 @@ import { deleteAsset } from "./cleanup";
 import { assetJson, isPast } from "./privacy";
 import { error, json } from "./responses";
 import { readJsonWithin } from "./request";
+import { maxPublicationBytes, maxUploadBytes, maxUploadFiles } from "../upload-limits";
 
-const maxUploads = 500;
 const finalizeLeaseMilliseconds = 5 * 60 * 1000;
 
 export async function createAsset(request: Request, env: Env): Promise<Response> {
@@ -46,6 +46,7 @@ export async function createAsset(request: Request, env: Env): Promise<Response>
         state: "uploading",
         visibility: "private",
         upload_count: 0,
+        upload_bytes: 0,
         finalize_token: null,
         finalize_started_at: null,
         manifest_id: null,
@@ -102,42 +103,78 @@ export async function uploadFile(
     return error("invalid_file", 400);
   }
 
+  const contentLengthHeader = request.headers.get("content-length");
+  if (contentLengthHeader === null || !/^\d+$/.test(contentLengthHeader)) {
+    return error("content_length_required", 411);
+  }
+  if (BigInt(contentLengthHeader) > BigInt(maxUploadBytes)) {
+    return error("upload_file_too_large", 413);
+  }
+  const declaredBytes = Number(contentLengthHeader);
+  const uploadId = crypto.randomUUID();
+  const key = uploadKey(id, uploadId);
+
   const reservation = await env.DB.prepare(
-    "UPDATE assets SET upload_count = upload_count + 1, updated_at = ? " +
-      "WHERE id = ? AND state = 'uploading' AND upload_count < ?",
+    "UPDATE assets SET upload_count = upload_count + 1, upload_bytes = upload_bytes + ?, updated_at = ? " +
+      "WHERE id = ? AND state = 'uploading' AND upload_count < ? AND upload_bytes + ? <= ?",
   )
-    .bind(new Date().toISOString(), id, maxUploads)
+    .bind(
+      declaredBytes,
+      new Date().toISOString(),
+      id,
+      maxUploadFiles,
+      declaredBytes,
+      maxPublicationBytes,
+    )
     .run();
   if (reservation.meta.changes !== 1) {
     const asset = await findAsset(env.DB, id);
     if (asset === null || asset.state === "deleted") return error("not_found", 404);
-    return asset.state === "uploading"
-      ? error("upload_limit_reached", 409)
-      : error("asset_not_uploading", 409);
+    if (asset.state !== "uploading") return error("asset_not_uploading", 409);
+    if (asset.upload_count >= maxUploadFiles) return error("upload_limit_reached", 409);
+    if (asset.upload_bytes + declaredBytes > maxPublicationBytes) {
+      return error("upload_bytes_limit_reached", 409);
+    }
+    return error("upload_limit_reached", 409);
   }
 
-  const uploadId = crypto.randomUUID();
-  const key = uploadKey(id, uploadId);
-  await env.ASSETS.put(key, request.body, {
-    httpMetadata: {
-      contentType: request.headers.get("content-type") ?? "application/octet-stream",
-    },
-    customMetadata: { kind: "file", path },
-  });
+  let stored: R2Object | null;
+  try {
+    stored = await env.ASSETS.put(key, request.body, {
+      httpMetadata: {
+        contentType: request.headers.get("content-type") ?? "application/octet-stream",
+      },
+      customMetadata: { kind: "file", path },
+    });
+  } catch (cause) {
+    await rollbackUpload(env, id, key, declaredBytes);
+    throw cause;
+  }
+  if (stored === null || typeof stored !== "object") {
+    await rollbackUpload(env, id, key, declaredBytes);
+    return error("upload_failed", 502);
+  }
+  let storedSize: number;
+  try {
+    storedSize = stored.size;
+  } catch (cause) {
+    await rollbackUpload(env, id, key, declaredBytes);
+    throw cause;
+  }
+  if (storedSize !== declaredBytes) {
+    await rollbackUpload(env, id, key, declaredBytes);
+    return error("upload_size_mismatch", 502);
+  }
 
   let current: AssetRow | null;
   try {
     current = await findAsset(env.DB, id);
   } catch (cause) {
-    await env.ASSETS.delete(key).then(
-      () => releaseUploadSlot(env, id),
-      () => undefined,
-    );
+    await rollbackUpload(env, id, key, declaredBytes);
     throw cause;
   }
   if (current?.state !== "uploading") {
-    await env.ASSETS.delete(key);
-    await releaseUploadSlot(env, id);
+    await rollbackUpload(env, id, key, declaredBytes);
     return error(
       current === null || current.state === "deleted" ? "not_found" : "asset_not_uploading",
       current === null || current.state === "deleted" ? 404 : 409,
@@ -146,13 +183,31 @@ export async function uploadFile(
   return json({ file: { path, uploadId } }, 201);
 }
 
-async function releaseUploadSlot(env: Env, id: string): Promise<void> {
+async function releaseUploadSlot(env: Env, id: string, declaredBytes: number): Promise<void> {
   await env.DB.prepare(
-    "UPDATE assets SET upload_count = MAX(upload_count - 1, 0), updated_at = ? WHERE id = ?",
+    "UPDATE assets SET upload_count = MAX(upload_count - 1, 0), " +
+      "upload_bytes = MAX(upload_bytes - ?, 0), updated_at = ? WHERE id = ?",
   )
-    .bind(new Date().toISOString(), id)
-    .run()
-    .catch(() => undefined);
+    .bind(declaredBytes, new Date().toISOString(), id)
+    .run();
+}
+
+async function rollbackUpload(
+  env: Env,
+  id: string,
+  key: string,
+  declaredBytes: number,
+): Promise<void> {
+  try {
+    await env.ASSETS.delete(key);
+  } catch {
+    // Preserve the original upload or state error.
+  }
+  try {
+    await releaseUploadSlot(env, id, declaredBytes);
+  } catch {
+    // Preserve the original upload or state error.
+  }
 }
 
 export async function finalizeAsset(request: Request, env: Env, id: string): Promise<Response> {

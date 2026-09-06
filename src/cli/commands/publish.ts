@@ -52,7 +52,10 @@ export async function publish(
         `${origin(dependencies)}/api/assets/${id}/files/${encodedPath(file.path)}`,
         {
           method: "PUT",
-          headers: { "content-type": file.contentType },
+          headers: {
+            "content-type": file.contentType,
+            "content-length": String(file.bytes.byteLength),
+          },
           body: file.bytes.buffer.slice(
             file.bytes.byteOffset,
             file.bytes.byteOffset + file.bytes.byteLength,

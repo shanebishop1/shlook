@@ -1,4 +1,5 @@
 import { assetPrefix } from "./artifact";
+import { abandonedUploadMilliseconds } from "../upload-limits";
 
 interface CleanupEnv {
   ASSETS: R2Bucket;
@@ -20,7 +21,7 @@ export async function deleteAsset(env: CleanupEnv, id: string): Promise<Response
   if (asset === null) return Response.json({ error: "not_found" }, { status: 404 });
   await env.DB.prepare(
     "UPDATE assets SET state = 'deleted', cleanup_pending = 1, finalize_token = NULL, " +
-      "finalize_started_at = NULL, updated_at = ? WHERE id = ?",
+      "finalize_started_at = NULL, upload_count = 0, upload_bytes = 0, updated_at = ? WHERE id = ?",
   )
     .bind(new Date().toISOString(), id)
     .run();
@@ -30,12 +31,16 @@ export async function deleteAsset(env: CleanupEnv, id: string): Promise<Response
 
 export async function cleanupExpired(env: CleanupEnv): Promise<void> {
   const now = new Date().toISOString();
+  const abandonedBefore = new Date(Date.now() - abandonedUploadMilliseconds).toISOString();
   await env.DB.prepare(
-    "UPDATE assets SET state = 'deleted', cleanup_pending = 1, updated_at = ? WHERE id IN (" +
-      "SELECT id FROM assets WHERE state = 'live' AND hard_expires_at IS NOT NULL " +
-      "AND hard_expires_at <= ? ORDER BY hard_expires_at LIMIT 10)",
+    "UPDATE assets SET state = 'deleted', cleanup_pending = 1, finalize_token = NULL, " +
+      "finalize_started_at = NULL, upload_count = 0, upload_bytes = 0, updated_at = ? " +
+      "WHERE id IN (SELECT id FROM assets WHERE " +
+      "(state = 'live' AND hard_expires_at IS NOT NULL AND hard_expires_at <= ?) OR " +
+      "(state IN ('uploading', 'finalizing') AND updated_at <= ?) " +
+      "ORDER BY CASE WHEN state = 'live' THEN hard_expires_at ELSE updated_at END LIMIT 10)",
   )
-    .bind(now, now)
+    .bind(now, now, abandonedBefore)
     .run();
   const { results } = await env.DB.prepare(
     "SELECT id FROM assets WHERE cleanup_pending = 1 ORDER BY cleanup_checked_at ASC LIMIT 10",

@@ -1,3 +1,5 @@
+import { maxUploadFiles } from "../upload-limits";
+
 export const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface Manifest {
@@ -50,7 +52,7 @@ export function manifestKey(id: string, manifestId: string): string {
   return `${assetPrefix(id)}manifests/${manifestId}.json`;
 }
 
-export function validateManifest(value: unknown, maxFiles = 500): Manifest | null {
+export function validateManifest(value: unknown, maxFiles = maxUploadFiles): Manifest | null {
   if (typeof value !== "object" || value === null) return null;
   const input = value as { entrypoint?: unknown; files?: unknown };
   if (typeof input.entrypoint !== "string" || !Array.isArray(input.files)) return null;

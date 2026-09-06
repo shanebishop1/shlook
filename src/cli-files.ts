@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, open, readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import { maxPublicationBytes, maxUploadBytes, maxUploadFiles } from "./upload-limits.ts";
 
 export interface PublishFile {
   path: string;
@@ -212,7 +213,8 @@ async function openInput(path: string): Promise<FileHandle> {
     }
     let parent = await descriptorPath(handle);
     for (let index = 0; index < parts.length; index += 1) {
-      const child = await open(join(parent.path, parts[index]), openFlags);
+      const childPath = join(parent.path, parts[index]);
+      const child = await open(childPath, openFlags);
       try {
         const metadata = await child.stat();
         const descriptor = await descriptorPath(child);
@@ -241,7 +243,8 @@ async function walk(
   rootCanonical: string,
   directory: FileHandle,
   logicalParent: string,
-  files: PublishFile[],
+  files: FileCandidate[],
+  totalBytes: { value: number },
 ): Promise<void> {
   const metadata = await directory.stat();
   if (!metadata.isDirectory()) throw new Error("publish input contains a non-directory");
@@ -254,25 +257,64 @@ async function walk(
   for (const entry of entries) {
     const publishPath = logicalChild(logicalParent, entry.name);
     const child = await open(join(descriptor.path, entry.name), openFlags);
+    let retained = false;
     try {
       const childMetadata = await child.stat();
       const childDescriptor = await descriptorPath(child);
       if (!contained(rootCanonical, childDescriptor.canonical)) {
         throw new Error("publish input escaped its descriptor root");
       }
-      if (childMetadata.isDirectory()) await walk(rootCanonical, child, publishPath, files);
+      if (childMetadata.isDirectory())
+        await walk(rootCanonical, child, publishPath, files, totalBytes);
       else if (childMetadata.isFile()) {
+        if (files.length >= maxUploadFiles) {
+          throw new Error(`publish input exceeds ${maxUploadFiles} files`);
+        }
+        if (!Number.isSafeInteger(childMetadata.size) || childMetadata.size > maxUploadBytes) {
+          throw new Error("publish input contains a file larger than 25 MiB");
+        }
+        if (totalBytes.value + childMetadata.size > maxPublicationBytes) {
+          throw new Error("publish input exceeds 100 MiB");
+        }
+        totalBytes.value += childMetadata.size;
         files.push({
           path: publishPath,
-          bytes: new Uint8Array(await child.readFile()),
+          handle: child,
+          size: childMetadata.size,
           contentType: contentType(publishPath),
         });
-        if (files.length > 500) throw new Error("publish input exceeds 500 files");
+        retained = true;
       } else throw new Error("publish input contains a non-regular file");
     } finally {
-      await child.close();
+      if (!retained) await child.close();
     }
   }
+}
+
+interface FileCandidate {
+  path: string;
+  handle: FileHandle;
+  size: number;
+  contentType: string;
+}
+
+async function readCandidate(file: FileCandidate): Promise<PublishFile> {
+  const bytes = new Uint8Array(file.size);
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const result = await file.handle.read(bytes, offset, bytes.byteLength - offset, offset);
+    if (result.bytesRead === 0) break;
+    offset += result.bytesRead;
+  }
+  const current = await file.handle.stat();
+  if (offset !== file.size || current.size !== file.size) {
+    throw new Error("publish input changed while being read");
+  }
+  return { path: file.path, bytes, contentType: file.contentType };
+}
+
+async function closeCandidates(files: FileCandidate[]): Promise<void> {
+  await Promise.allSettled(files.map((file) => file.handle.close()));
 }
 
 export async function loadPublishInput(
@@ -293,28 +335,38 @@ export async function loadPublishInput(
       if (requestedEntrypoint !== undefined && requestedEntrypoint !== name) {
         throw new Error("single-file entrypoint must equal the filename");
       }
+      if (!Number.isSafeInteger(metadata.size) || metadata.size > maxUploadBytes) {
+        throw new Error("publish input contains a file larger than 25 MiB");
+      }
       return {
         entrypoint: name,
         files: [
-          {
+          await readCandidate({
             path: name,
-            bytes: new Uint8Array(await handle.readFile()),
+            handle,
+            size: metadata.size,
             contentType: contentType(name),
-          },
+          }),
         ],
       };
     }
     if (!metadata.isDirectory())
       throw new Error("publish input must be a regular file or directory");
 
-    const files: PublishFile[] = [];
-    await walk(descriptor.canonical, handle, "", files);
-    if (files.length === 0) throw new Error("publish directory is empty");
-    const entrypoint = requestedEntrypoint ?? "index.html";
-    if (!files.some((file) => file.path === entrypoint)) {
-      throw new Error(`entrypoint does not exist: ${entrypoint}`);
+    const candidates: FileCandidate[] = [];
+    const totalBytes = { value: 0 };
+    try {
+      await walk(descriptor.canonical, handle, "", candidates, totalBytes);
+      if (candidates.length === 0) throw new Error("publish directory is empty");
+      const entrypoint = requestedEntrypoint ?? "index.html";
+      if (!candidates.some((file) => file.path === entrypoint)) {
+        throw new Error(`entrypoint does not exist: ${entrypoint}`);
+      }
+      const files = await Promise.all(candidates.map((file) => readCandidate(file)));
+      return { entrypoint, files };
+    } finally {
+      await closeCandidates(candidates);
     }
-    return { entrypoint, files };
   } finally {
     await handle.close();
   }
