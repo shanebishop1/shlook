@@ -7,6 +7,7 @@ export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(import.meta.dirname, "migrations"));
 
   return {
+    test: { maxWorkers: 4 },
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./test/wrangler.jsonc" },
