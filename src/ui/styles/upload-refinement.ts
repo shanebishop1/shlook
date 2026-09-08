@@ -26,6 +26,9 @@ input:not([type="radio"]):focus-visible, textarea:focus-visible {
 }
 .visibility-option input:checked + .visibility-choice { border-color: var(--muted); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .upload-status:empty { display: none; }
+.upload-actions { justify-content: flex-end; }
+.upload-status { order: 1; margin-right: auto; }
+[data-upload-submit] { order: 2; }
 html[data-theme="dark"] .drop-zone { background: #1a1c1a; }
 html[data-theme="dark"] .drop-zone:hover, html[data-theme="dark"] .drop-zone.is-dragging {
   background: #252825;
@@ -36,6 +39,8 @@ html[data-theme="dark"] .drop-zone:hover, html[data-theme="dark"] .drop-zone.is-
   .drop-zone { min-height: 170px; padding: 20px 56px 20px 20px; }
   .upload-config { padding: 22px; }
   .visibility-choice { min-height: 58px; }
+  .upload-actions { align-items: flex-end; flex-direction: column; }
+  .upload-status { width: 100%; margin-right: 0; text-align: left; }
 }
 
 @media (prefers-reduced-motion: reduce) {

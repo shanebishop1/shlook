@@ -104,7 +104,7 @@ document.querySelectorAll('[data-local-time]').forEach((element) => {
 });
 uploadInput.required = false;
 uploadInput.addEventListener('change', () => chooseUploadFile(uploadInput.files && uploadInput.files[0]));
-document.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('change', syncSelection));
+bindSelectionItems();
 document.addEventListener('click', (event) => {
   if (!selectMode) return;
   const row = event.target.closest('[data-record]');
@@ -178,6 +178,7 @@ uploadForm.addEventListener('submit', async (event) => {
       resultUrl = secret.url;
       resultLabel = 'Secret URL ready';
     }
+    try { await refreshArchive(); } catch {}
     uploadResultUrl.href = resultUrl;
     uploadResultUrl.textContent = resultUrl;
     uploadForm.querySelector('[data-upload-result-label]').textContent = resultLabel;
@@ -331,8 +332,5 @@ document.addEventListener('click', async (event) => {
   finally { if (document.contains(button)) button.disabled = false; }
 });
 filterRecords();
-document.querySelectorAll('[data-preview-image]').forEach((image) => {
-  image.addEventListener('error', () => showPreviewFallback(image), { once: true });
-  if (image.complete && image.naturalWidth === 0) showPreviewFallback(image);
-});`;
+bindPreviewImages();`;
 }

@@ -17,12 +17,6 @@ th:nth-child(7) { width: 104px; }
 .preview-media { position: relative; overflow: hidden; }
 .preview-frame { position: absolute; inset: 0 auto auto 0; pointer-events: none; transform-origin: top left; }
 .preview-frame { background: #fff; }
-.preview-unavailable::after {
-  content: "HTML"; position: absolute; inset: 0; display: grid; place-items: center;
-  color: var(--muted); font: 650 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .12em; background: var(--preview);
-}
-
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(7px); }
   to { opacity: 1; transform: none; }

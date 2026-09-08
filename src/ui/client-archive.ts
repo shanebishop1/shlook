@@ -24,46 +24,67 @@ const setSelectMode = (enabled) => {
 };
 const uploadVisibility = () => uploadForm.querySelector('[name="upload-visibility"]:checked').value;
 const cardForId = (id) => document.querySelector('[data-detail="' + id + '"]');
-const fitPreviewFrame = (frame) => {
+const loadPreviewFrame = (frame) => {
   const media = frame.parentElement;
   const renderWidth = 1280;
-  const load = () => {
-    if (frame.hasAttribute('src') || frame.dataset.loading) return;
-    frame.dataset.loading = '1';
-    requestAnimationFrame(() => {
-      delete frame.dataset.loading;
-      if (media.clientWidth <= 0 || media.clientHeight <= 0 || frame.clientWidth !== renderWidth) return;
-      frame.src = frame.dataset.src;
-    });
-  };
+  if (frame.hasAttribute('src')) return;
+  const scale = media.clientWidth / renderWidth;
+  if (scale <= 0 || media.clientHeight <= 0) return;
+  frame.style.width = renderWidth + 'px';
+  frame.style.height = Math.ceil(media.clientHeight / scale) + 'px';
+  frame.style.transform = 'scale(' + scale + ')';
+  frame.src = frame.dataset.src;
+};
+const fitPreviewFrame = (frame, loadWhenReady = true) => {
+  const media = frame.parentElement;
+  const renderWidth = 1280;
+  if (frame.dataset.fitted) {
+    if (loadWhenReady) loadPreviewFrame(frame);
+    return;
+  }
+  frame.dataset.fitted = '1';
   const resize = () => {
     const scale = media.clientWidth / renderWidth;
     if (scale <= 0 || media.clientHeight <= 0) return;
     frame.style.width = renderWidth + 'px';
     frame.style.height = Math.ceil(media.clientHeight / scale) + 'px';
     frame.style.transform = 'scale(' + scale + ')';
-    load();
+    if (loadWhenReady) loadPreviewFrame(frame);
   };
   if (typeof ResizeObserver === 'function') new ResizeObserver(resize).observe(media);
   else addEventListener('resize', resize, { passive: true });
   requestAnimationFrame(resize);
 };
+const mobilePreviewObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    const frame = entry.target.querySelector('[data-preview-fallback]');
+    if (entry.isIntersecting) fitPreviewFrame(frame);
+    else frame.removeAttribute('src');
+  }
+}, { rootMargin: '160px 0px' }) : null;
 const showPreviewFallback = (image) => {
   const media = image.parentElement;
   const frame = media.querySelector('[data-preview-fallback]');
-  if (!frame.hidden || media.classList.contains('preview-unavailable')) return;
+  if (!frame.hidden) return;
   image.hidden = true;
   if (innerWidth < 901 && !media.hasAttribute('data-preview-large')) {
-    media.classList.add('preview-unavailable');
+    frame.hidden = false;
+    fitPreviewFrame(frame, mobilePreviewObserver === null);
+    mobilePreviewObserver?.observe(media);
     return;
   }
   frame.hidden = false;
   fitPreviewFrame(frame);
 };
+const bindPreviewImages = (root = document) => root.querySelectorAll('[data-preview-image]').forEach((image) => {
+  image.addEventListener('error', () => showPreviewFallback(image), { once: true });
+  if (image.complete && image.naturalWidth === 0) showPreviewFallback(image);
+});
 const releaseDetailPreview = (detail) => {
   if (innerWidth >= 901) return;
   detail.querySelector('[data-preview-large] [data-preview-fallback]')?.removeAttribute('src');
 };
+const bindSelectionItems = (root = document) => root.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('change', syncSelection));
 const closeMenus = (except) => {
   document.querySelectorAll('[data-menu-list]:not([hidden])').forEach((list) => {
     if (list === except) return;
@@ -100,6 +121,25 @@ const filterRecords = () => {
     if (match) visible++;
   }
   empty.hidden = visible !== 0;
+};
+const refreshArchive = async () => {
+  const response = await fetch('/');
+  if (!response.ok) throw new Error('Archive refresh failed.');
+  const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
+  const nextBody = nextDocument.querySelector('.ledger tbody');
+  const nextCount = nextDocument.querySelector('[data-count]');
+  const nextPagination = nextDocument.querySelector('.pagination');
+  if (!nextBody || !nextCount || !nextPagination) throw new Error('Archive refresh failed.');
+  document.querySelector('.ledger tbody').replaceWith(nextBody);
+  count.textContent = nextCount.textContent;
+  pagination.innerHTML = nextPagination.innerHTML;
+  records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
+  bindSelectionItems(nextBody);
+  bindPreviewImages(nextBody);
+  document.querySelector('input[data-search]').value = '';
+  setMenuValue(filterMenu, 'all');
+  filterRecords();
+  history.replaceState(null, '', '/');
 };
 const shareUrlFor = (card, value) => value === 'public' ? card.dataset.publicUrl : value === 'secret_link' ? card.dataset.secretUrl : '';
 const syncShare = (row, card, value) => {

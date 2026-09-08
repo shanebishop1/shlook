@@ -1,9 +1,11 @@
 export function sharedClientScript(): string {
   return `
 const records = [...document.querySelectorAll('[data-record]')];
+const count = document.querySelector('[data-count]');
 const empty = document.querySelector('[data-empty]');
 const toast = document.querySelector('[data-toast]');
 const filterMenu = document.querySelector('[data-filter-menu]');
+const pagination = document.querySelector('.pagination');
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const uploadDialog = document.querySelector('[data-upload-dialog]');
 const uploadOpen = document.querySelector('[data-upload-open]');

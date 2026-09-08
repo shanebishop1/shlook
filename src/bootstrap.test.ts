@@ -128,18 +128,17 @@ describe("worker bootstrap", () => {
       "if (typeof ResizeObserver === 'function') new ResizeObserver(resize).observe(media);",
     );
     expect(body).toContain("const renderWidth = 1280;");
-    expect(body).toContain(
-      "if (!frame.hidden || media.classList.contains('preview-unavailable')) return;",
-    );
+    expect(body).toContain("if (!frame.hidden) return;");
     expect(body).toContain("data-preview-large");
     expect(body).toContain("innerWidth < 901 && !media.hasAttribute('data-preview-large')");
+    expect(body).toContain("new IntersectionObserver((entries) => {");
+    expect(body).toContain("{ rootMargin: '160px 0px' }");
+    expect(body).toContain("else frame.removeAttribute('src');");
     expect(body).toContain("releaseDetailPreview(otherDetail);");
     expect(body).toContain("requestAnimationFrame(resize)");
-    expect(body).toContain("frame.clientWidth !== renderWidth");
+    expect(body).toContain("const scale = media.clientWidth / renderWidth;");
     expect(body).toContain("frame.src = frame.dataset.src;");
-    expect(body).toContain(
-      "filterRecords();\ndocument.querySelectorAll('[data-preview-image]').forEach",
-    );
+    expect(body).toContain("filterRecords();\nbindPreviewImages();");
     expect(body).toContain(".preview-media { position: relative; overflow: hidden; }");
     expect(body).toContain("pointer-events: none; transform-origin: top left;");
     expect(body).toContain(".preview-frame { background: #fff; }");
@@ -235,6 +234,8 @@ describe("worker bootstrap", () => {
     );
     expect(body).toContain('data-upload-input type="file"');
     expect(body).toContain("uploadInput.required = false;");
+    expect(body).toContain("try { await refreshArchive(); } catch {}");
+    expect(body).toContain("history.replaceState(null, '', '/');");
     expect(body).toContain('name="upload-visibility" value="private" checked');
     expect(body).toContain('name="upload-visibility" value="secret_link"');
     expect(body).toContain("data-upload-submit disabled");
@@ -321,6 +322,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain(".upload-result [data-upload-refresh] { display: none; }");
     expect(body).not.toContain("querySelector('[data-upload-refresh]').addEventListener");
     expect(body).toContain(".upload-close { position: absolute; top: 10px; right: 10px;");
+    expect(body).toContain(".upload-actions { justify-content: flex-end; }");
+    expect(body).toContain("[data-upload-submit] { order: 2; }");
+    expect(body).toContain(".upload-actions { align-items: flex-end; flex-direction: column; }");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
     expect(body).not.toContain("Hard expires");
