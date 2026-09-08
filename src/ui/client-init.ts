@@ -210,6 +210,13 @@ uploadForm.querySelector('[data-upload-copy]').addEventListener('click', async (
 });
 uploadForm.querySelector('[data-upload-again]').addEventListener('click', () => { resetUpload(); requestAnimationFrame(() => uploadDialog.focus()); });
 document.querySelector('[data-search]').addEventListener('input', filterRecords);
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('.pagination a');
+  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigateArchive(link.href, 'push');
+}, true);
+addEventListener('popstate', () => navigateArchive(location.href, 'none'));
 document.addEventListener('keydown', (event) => {
   const menu = event.target.closest?.('.custom-select');
   if (event.key === 'Escape') {

@@ -235,7 +235,11 @@ describe("worker bootstrap", () => {
     expect(body).toContain('data-upload-input type="file"');
     expect(body).toContain("uploadInput.required = false;");
     expect(body).toContain("try { await refreshArchive(); } catch {}");
-    expect(body).toContain("history.replaceState(null, '', '/');");
+    expect(body).toContain("history.replaceState(null, '', archivePath);");
+    expect(body).toContain("mobilePreviewObserver?.disconnect();");
+    expect(body).toContain("navigateArchive(link.href, 'push');");
+    expect(body).toContain("addEventListener('popstate'");
+    expect(body).toContain("if (archiveLoading) return;");
     expect(body).toContain('name="upload-visibility" value="private" checked');
     expect(body).toContain('name="upload-visibility" value="secret_link"');
     expect(body).toContain("data-upload-submit disabled");

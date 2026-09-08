@@ -122,14 +122,21 @@ const filterRecords = () => {
   }
   empty.hidden = visible !== 0;
 };
-const refreshArchive = async () => {
-  const response = await fetch('/');
+const refreshArchive = async (path = '/', historyMode = 'replace') => {
+  const url = new URL(path, location.origin);
+  if (url.origin !== location.origin) throw new Error('Archive navigation was blocked.');
+  const archivePath = url.pathname + url.search;
+  const response = await fetch(archivePath);
   if (!response.ok) throw new Error('Archive refresh failed.');
   const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
   const nextBody = nextDocument.querySelector('.ledger tbody');
   const nextCount = nextDocument.querySelector('[data-count]');
   const nextPagination = nextDocument.querySelector('.pagination');
   if (!nextBody || !nextCount || !nextPagination) throw new Error('Archive refresh failed.');
+  if (innerWidth < 901) {
+    mobilePreviewObserver?.disconnect();
+    document.querySelectorAll('.ledger iframe[src]').forEach((frame) => frame.removeAttribute('src'));
+  }
   document.querySelector('.ledger tbody').replaceWith(nextBody);
   count.textContent = nextCount.textContent;
   pagination.innerHTML = nextPagination.innerHTML;
@@ -139,7 +146,23 @@ const refreshArchive = async () => {
   document.querySelector('input[data-search]').value = '';
   setMenuValue(filterMenu, 'all');
   filterRecords();
-  history.replaceState(null, '', '/');
+  if (historyMode === 'push') history.pushState(null, '', archivePath);
+  else if (historyMode === 'replace') history.replaceState(null, '', archivePath);
+};
+let archiveLoading = false;
+const navigateArchive = async (path, historyMode) => {
+  if (archiveLoading) return;
+  archiveLoading = true;
+  pagination.setAttribute('aria-busy', 'true');
+  try {
+    await refreshArchive(path, historyMode);
+    scrollTo({ top: 0, behavior: innerWidth < 901 || reduceMotion.matches ? 'auto' : 'smooth' });
+  } catch (error) {
+    setStatus(null, error instanceof Error ? error.message : 'Archive navigation failed.', true);
+  } finally {
+    archiveLoading = false;
+    pagination.removeAttribute('aria-busy');
+  }
 };
 const shareUrlFor = (card, value) => value === 'public' ? card.dataset.publicUrl : value === 'secret_link' ? card.dataset.secretUrl : '';
 const syncShare = (row, card, value) => {
