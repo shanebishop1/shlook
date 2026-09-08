@@ -30,12 +30,18 @@ export async function ownerPage(
     return Response.json({ error: "invalid_offset" }, { status: 400 });
   }
 
-  const { assets, hasMore } = await readOwnerAssets(db, offset, shareOrigin, secretEncryptionKey);
+  const { assets, hasMore, total } = await readOwnerAssets(
+    db,
+    offset,
+    shareOrigin,
+    secretEncryptionKey,
+  );
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
   const nonce = btoa(String.fromCharCode(...nonceBytes));
   const body = ownerDocument({
     assets,
     hasMore,
+    total,
     offset,
     ownerOrigin,
     privateOrigin,

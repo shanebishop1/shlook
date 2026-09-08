@@ -102,6 +102,7 @@ document.querySelectorAll('[data-local-time]').forEach((element) => {
   element.textContent = localDate.format(date);
   element.append(zone);
 });
+uploadInput.required = false;
 uploadInput.addEventListener('change', () => chooseUploadFile(uploadInput.files && uploadInput.files[0]));
 document.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('change', syncSelection));
 document.addEventListener('click', (event) => {
@@ -119,10 +120,21 @@ document.addEventListener('click', (event) => {
   dropZone.classList.add('is-dragging');
 }));
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('is-dragging'));
-dropZone.addEventListener('drop', (event) => {
+document.addEventListener('dragover', (event) => {
+  if (!uploadDragHasFile(event.dataTransfer)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+});
+document.addEventListener('drop', (event) => {
+  if (!uploadDragHasFile(event.dataTransfer)) return;
   event.preventDefault();
   dropZone.classList.remove('is-dragging');
-  chooseUploadFile(event.dataTransfer && event.dataTransfer.files[0]);
+  if (uploadBusy) return;
+  const file = uploadFileFromDrop(event.dataTransfer);
+  resetUpload();
+  if (uploadDialog.hidden) openUpload();
+  if (file) chooseUploadFile(file);
+  else setUploadStatus('That drag did not include a usable file. Try choosing it instead.', true);
 });
 uploadForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -195,7 +207,6 @@ uploadForm.querySelector('[data-upload-copy]').addEventListener('click', async (
     uploadForm.querySelector('[data-upload-result-label]').textContent = error instanceof Error ? error.message : 'Copy failed.';
   }
 });
-uploadForm.querySelector('[data-upload-refresh]').addEventListener('click', () => location.reload());
 uploadForm.querySelector('[data-upload-again]').addEventListener('click', () => { resetUpload(); requestAnimationFrame(() => uploadDialog.focus()); });
 document.querySelector('[data-search]').addEventListener('input', filterRecords);
 document.addEventListener('keydown', (event) => {

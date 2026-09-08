@@ -24,13 +24,16 @@ body.upload-modal-open { overflow: hidden; }
 .upload-close:hover { background: var(--faint); }
 .upload-close svg { width: 17px; }
 .upload-result, .upload-result-copy { min-width: 0; max-width: 100%; }
+.upload-result { padding: 22px; align-items: stretch; flex-direction: column; }
+.upload-result-copy { padding-right: 40px; }
 .upload-result-url { overflow-wrap: anywhere; word-break: break-word; white-space: normal; text-overflow: clip; }
-.upload-result-actions { flex-wrap: wrap; }
+.upload-result-actions { width: 100%; justify-content: center; flex-wrap: wrap; }
+.upload-result [data-upload-refresh] { display: none; }
 
 @media (max-width: 520px) {
   .header-actions { gap: 8px; }
   .upload-open { padding: 0 11px; }
-  .upload-card { padding: 10px; place-items: start center; }
+  .upload-card { padding: 10px; place-items: center; }
   .upload-form { max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); }
   .upload-result-actions .button { min-width: 0; }
   .upload-result-url { font-size: 10px; }

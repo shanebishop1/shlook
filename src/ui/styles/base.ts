@@ -15,6 +15,7 @@ export function baseStyles(): string {
   --shadow: 0 12px 32px #1b2b2514;
 }
 * { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 html { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
@@ -36,7 +37,7 @@ h1 { margin: 0; font-size: 26px; line-height: 1.15; letter-spacing: -.035em; fon
 .page-heading p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
-.search { position: relative; width: min(380px, 100%); }
+.search { position: relative; display: block; width: min(380px, 100%); }
 .search svg { position: absolute; left: 12px; top: 50%; width: 16px; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 .search input {
   width: 100%; height: 38px; padding: 0 12px 0 38px;

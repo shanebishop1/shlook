@@ -53,6 +53,24 @@ const trapDialogFocus = (dialog, event) => {
     first.focus();
   }
 };
+const uploadFileFromDrop = (dataTransfer) => {
+  if (!dataTransfer) return;
+  const directFile = dataTransfer.files && dataTransfer.files[0];
+  if (directFile) return directFile;
+  for (const item of dataTransfer.items || []) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) return file;
+  }
+};
+const uploadDragHasFile = (dataTransfer) => {
+  if (!dataTransfer) return false;
+  if (dataTransfer.files && dataTransfer.files.length > 0) return true;
+  for (const item of dataTransfer.items || []) {
+    if (item.kind === 'file') return true;
+  }
+  return [...(dataTransfer.types || [])].includes('Files');
+};
 const chooseUploadFile = (file) => {
   if (!file) return;
   selectedUploadFile = file;

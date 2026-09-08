@@ -1,7 +1,6 @@
 export function sharedClientScript(): string {
   return `
 const records = [...document.querySelectorAll('[data-record]')];
-const count = document.querySelector('[data-count]');
 const empty = document.querySelector('[data-empty]');
 const toast = document.querySelector('[data-toast]');
 const filterMenu = document.querySelector('[data-filter-menu]');

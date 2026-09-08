@@ -9,16 +9,27 @@ export async function readOwnerAssets(
   offset: number,
   shareOrigin: string,
   secretEncryptionKey?: string,
-): Promise<{ assets: OwnerAsset[]; hasMore: boolean }> {
-  const { results } = await db
-    .prepare(
-      "SELECT id, name, description, visibility, secret_hash, secret_ciphertext, secret_iv, " +
-        "share_expires_at, hard_expires_at, created_at, updated_at FROM assets WHERE state = 'live' AND " +
-        "(hard_expires_at IS NULL OR hard_expires_at > ?) " +
-        "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-    )
-    .bind(new Date().toISOString(), pageSize + 1, offset)
-    .all<OwnerAssetRow>();
+): Promise<{ assets: OwnerAsset[]; hasMore: boolean; total: number }> {
+  const now = new Date().toISOString();
+  const [page, count] = await Promise.all([
+    db
+      .prepare(
+        "SELECT id, name, description, visibility, secret_hash, secret_ciphertext, secret_iv, " +
+          "share_expires_at, hard_expires_at, created_at, updated_at FROM assets WHERE state = 'live' AND " +
+          "(hard_expires_at IS NULL OR hard_expires_at > ?) " +
+          "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+      )
+      .bind(now, pageSize + 1, offset)
+      .all<OwnerAssetRow>(),
+    db
+      .prepare(
+        "SELECT COUNT(*) AS total FROM assets WHERE state = 'live' AND " +
+          "(hard_expires_at IS NULL OR hard_expires_at > ?)",
+      )
+      .bind(now)
+      .first<{ total: number }>(),
+  ]);
+  const { results } = page;
 
   const recovered = await Promise.all(
     results.map(async (asset): Promise<OwnerAsset> => {
@@ -51,5 +62,9 @@ export async function readOwnerAssets(
     }),
   );
 
-  return { assets: recovered.slice(0, pageSize), hasMore: results.length > pageSize };
+  return {
+    assets: recovered.slice(0, pageSize),
+    hasMore: results.length > pageSize,
+    total: count?.total ?? 0,
+  };
 }

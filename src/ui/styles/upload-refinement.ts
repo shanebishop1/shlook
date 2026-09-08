@@ -6,7 +6,7 @@ input:not([type="radio"]):focus-visible, textarea:focus-visible {
 .upload-trigger:hover svg { transform: scale(1.12); }
 .upload-card:focus, .upload-heading h2:focus { outline: 0; }
 .upload-form { position: relative; grid-template-columns: 1fr; }
-.upload-close { position: absolute; top: 24px; right: 24px; z-index: 2; }
+.upload-close { position: absolute; top: 10px; right: 10px; z-index: 2; }
 .drop-zone {
   min-height: 210px; padding: 24px 64px 24px 24px; border: 0;
 }
@@ -32,7 +32,7 @@ html[data-theme="dark"] .drop-zone:hover, html[data-theme="dark"] .drop-zone.is-
 }
 
 @media (max-width: 520px) {
-  .upload-close { top: 16px; right: 16px; }
+  .upload-close { top: 10px; right: 10px; }
   .drop-zone { min-height: 170px; padding: 20px 56px 20px 20px; }
   .upload-config { padding: 22px; }
   .visibility-choice { min-height: 58px; }

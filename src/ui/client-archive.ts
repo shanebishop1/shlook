@@ -49,11 +49,20 @@ const fitPreviewFrame = (frame) => {
   requestAnimationFrame(resize);
 };
 const showPreviewFallback = (image) => {
-  const frame = image.parentElement.querySelector('[data-preview-fallback]');
-  if (!frame.hidden) return;
+  const media = image.parentElement;
+  const frame = media.querySelector('[data-preview-fallback]');
+  if (!frame.hidden || media.classList.contains('preview-unavailable')) return;
   image.hidden = true;
+  if (innerWidth < 901 && !media.hasAttribute('data-preview-large')) {
+    media.classList.add('preview-unavailable');
+    return;
+  }
   frame.hidden = false;
   fitPreviewFrame(frame);
+};
+const releaseDetailPreview = (detail) => {
+  if (innerWidth >= 901) return;
+  detail.querySelector('[data-preview-large] [data-preview-fallback]')?.removeAttribute('src');
 };
 const closeMenus = (except) => {
   document.querySelectorAll('[data-menu-list]:not([hidden])').forEach((list) => {
@@ -90,7 +99,6 @@ const filterRecords = () => {
     else if (row.classList.contains('is-open')) detail.hidden = false;
     if (match) visible++;
   }
-  count.textContent = visible + ' ' + (visible === 1 ? 'artifact' : 'artifacts');
   empty.hidden = visible !== 0;
 };
 const shareUrlFor = (card, value) => value === 'public' ? card.dataset.publicUrl : value === 'secret_link' ? card.dataset.secretUrl : '';
@@ -119,12 +127,19 @@ const toggle = (row) => {
     other.classList.remove('is-open');
     other.setAttribute('aria-selected', 'false');
     other.querySelector('[data-inspect][aria-expanded]').setAttribute('aria-expanded', 'false');
-    cardForId(other.dataset.record).hidden = true;
+    const otherDetail = cardForId(other.dataset.record);
+    otherDetail.hidden = true;
+    releaseDetailPreview(otherDetail);
   }
   row.classList.toggle('is-open', open);
   row.setAttribute('aria-selected', String(open));
   row.querySelector('[data-inspect][aria-expanded]').setAttribute('aria-expanded', String(open));
   detail.hidden = !open;
+  if (!open) releaseDetailPreview(detail);
+  const detailFrame = detail.querySelector('[data-preview-large] [data-preview-fallback]');
+  if (open && detailFrame && !detailFrame.hidden && !detailFrame.hasAttribute('src')) {
+    detailFrame.src = detailFrame.dataset.src;
+  }
   if (open && innerWidth < 901) row.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
 };
 const setTheme = (theme) => {

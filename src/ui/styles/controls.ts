@@ -77,6 +77,10 @@ html[data-theme="dark"] .theme-toggle .sun { display: block; }
 }
 
 @media (max-width: 520px) {
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .search { flex: 1; min-width: 0; }
+  .toolbar .selection-actions { order: 3; width: 100%; justify-content: flex-end; }
+  .pagination a { min-height: 44px; display: inline-flex; align-items: center; }
   .artifact-row { grid-template-columns: 96px minmax(0, 1fr) 96px; }
   .preview-button { width: 84px; }
   .artifact-title { font-size: 13px; }

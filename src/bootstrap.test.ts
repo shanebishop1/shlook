@@ -37,6 +37,27 @@ describe("worker bootstrap", () => {
     expect((await request("/missing")).status).toBe(404);
   });
 
+  it("shows the total artifact count on every archive page", async () => {
+    const now = new Date().toISOString();
+    await env.DB.batch(
+      Array.from({ length: 25 }, (_, index) =>
+        env.DB.prepare(
+          "INSERT INTO assets (id, name, state, visibility, created_at, updated_at) VALUES (?, ?, 'live', 'private', ?, ?)",
+        ).bind(
+          `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          `Artifact ${index}`,
+          now,
+          now,
+        ),
+      ),
+    );
+
+    const body = await (await request("/?offset=24")).text();
+
+    expect(body).toContain('<span class="count" data-count>25 artifacts</span>');
+    expect(body.match(/<tr class="artifact-row" data-record=/g)).toHaveLength(1);
+  });
+
   it("serves the Folded Signal favicon with a locked-down SVG policy", async () => {
     const response = await request("/favicon.svg");
     const body = await response.text();
@@ -107,7 +128,12 @@ describe("worker bootstrap", () => {
       "if (typeof ResizeObserver === 'function') new ResizeObserver(resize).observe(media);",
     );
     expect(body).toContain("const renderWidth = 1280;");
-    expect(body).toContain("if (!frame.hidden) return;");
+    expect(body).toContain(
+      "if (!frame.hidden || media.classList.contains('preview-unavailable')) return;",
+    );
+    expect(body).toContain("data-preview-large");
+    expect(body).toContain("innerWidth < 901 && !media.hasAttribute('data-preview-large')");
+    expect(body).toContain("releaseDetailPreview(otherDetail);");
     expect(body).toContain("requestAnimationFrame(resize)");
     expect(body).toContain("frame.clientWidth !== renderWidth");
     expect(body).toContain("frame.src = frame.dataset.src;");
@@ -177,6 +203,11 @@ describe("worker bootstrap", () => {
     expect(body).toContain("document.body.appendChild(confirmation)");
     expect(body).toContain("event.target === confirmation");
     expect(body).toContain("@media (min-width: 901px)");
+    expect(body).toContain(".upload-card { padding: 10px; place-items: center; }");
+    expect(body).toContain(
+      ".toolbar .selection-actions { order: 3; width: 100%; justify-content: flex-end; }",
+    );
+    expect(body).toContain(".pagination a { min-height: 44px;");
     expect(body).toContain(".large-preview .preview-image { position: absolute; inset: 0; }");
     expect(body).toContain(".large-preview { height: 250px; min-height: 250px; }");
     expect(body).toContain('href="https://github.com/shanebishop1/shlook"');
@@ -196,11 +227,14 @@ describe("worker bootstrap", () => {
     expect(body).toContain("card.dataset.detail + path");
     expect(body).not.toContain("card.dataset.id+path");
     expect(body).toContain("Artifact archive");
+    expect(body).toContain('<span class="count" data-count>1 artifact</span>');
+    expect(body).not.toContain("count.textContent = visible");
     expect(body).toContain('placeholder="Search name, description, or ID"');
     expect(body).toContain(
       'data-upload-form data-step="file" data-private-origin="https://private.example.com" data-public-origin="https://public.example.com"',
     );
     expect(body).toContain('data-upload-input type="file"');
+    expect(body).toContain("uploadInput.required = false;");
     expect(body).toContain('name="upload-visibility" value="private" checked');
     expect(body).toContain('name="upload-visibility" value="secret_link"');
     expect(body).toContain("data-upload-submit disabled");
@@ -218,6 +252,15 @@ describe("worker bootstrap", () => {
     expect(body).not.toContain("data-upload-option-summary");
     expect(body).not.toContain("data-upload-hint");
     expect(body).toContain("addEventListener('drop'");
+    expect(body).toContain("const uploadFileFromDrop = (dataTransfer) => {");
+    expect(body).toContain("const uploadDragHasFile = (dataTransfer) => {");
+    expect(body).toContain("for (const item of dataTransfer.items || [])");
+    expect(body).toContain("const file = item.getAsFile();");
+    expect(body).toContain("document.addEventListener('dragover'");
+    expect(body).toContain("document.addEventListener('drop'");
+    expect(body).toContain("event.dataTransfer.dropEffect = 'copy';");
+    expect(body).toContain("if (uploadDialog.hidden) openUpload();");
+    expect(body).toContain("That drag did not include a usable file. Try choosing it instead.");
     expect(body).toContain("file.name.replace(/\\.[^.]+$/, '')");
     expect(body).toContain("'/api/assets/' + id + '/files/' + encodeURIComponent(file.name)");
     expect(body).toContain(
@@ -256,12 +299,28 @@ describe("worker bootstrap", () => {
     expect(body).toContain("uploadForm.dataset.step = 'done';");
     expect(body).toContain("data-upload-again");
     expect(body).toContain(".selection-actions [hidden] { display: none !important; }");
+    expect(body).toContain(
+      ".selection-actions [data-select-icon] { display: grid; place-items: center; line-height: 0; }",
+    );
+    expect(body).toContain(".selection-actions svg { display: block; width: 16px; }");
+    expect(body).toContain(".selection-actions { min-width: 58px; justify-content: flex-end; }");
+    expect(body).toContain('<circle cx="11.5" cy="11.5" r="7.5"');
+    expect(body).toContain('<path d="m17 17 4 4"');
     expect(body).toContain("td.preview-cell { position: relative; }");
     expect(body).toContain('data-batch-delete aria-label="Delete selected artifacts"');
     expect(body).toContain('data-select-item type="checkbox"');
     expect(body).toContain("const setSelectMode = (enabled) => {");
     expect(body).toContain("Promise.all(items.map((item) => ownerRequest('/api/assets/'");
     expect(body).toContain(".upload-result-url { overflow-wrap: anywhere; word-break: break-word;");
+    expect(body).toContain(".sr-only { position: absolute;");
+    expect(body).toContain(".search { position: relative; display: block;");
+    expect(body).toContain(
+      ".upload-result { padding: 22px; align-items: stretch; flex-direction: column; }",
+    );
+    expect(body).toContain(".upload-result-actions { width: 100%; justify-content: center;");
+    expect(body).toContain(".upload-result [data-upload-refresh] { display: none; }");
+    expect(body).not.toContain("querySelector('[data-upload-refresh]').addEventListener");
+    expect(body).toContain(".upload-close { position: absolute; top: 10px; right: 10px;");
     expect(body).not.toContain("<select");
     expect(body).not.toContain("Share expires");
     expect(body).not.toContain("Hard expires");

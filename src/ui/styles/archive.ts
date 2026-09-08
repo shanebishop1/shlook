@@ -44,8 +44,9 @@ export function detailPreviewStyles(): string {
   return `
 .selection-actions { display: flex; align-items: center; gap: 8px; order: 2; }
 .selection-actions .icon-button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
+.selection-actions [data-select-icon] { display: grid; place-items: center; line-height: 0; }
 .selection-actions [hidden] { display: none !important; }
-.selection-actions svg { width: 16px; }
+.selection-actions svg { display: block; width: 16px; }
 td.preview-cell { position: relative; }
 .select-item {
   position: absolute; top: 19px; left: 20px; z-index: 3; display: none;
@@ -55,6 +56,10 @@ td.preview-cell { position: relative; }
 body.selection-mode .select-item { display: block; }
 body.selection-mode .preview-button, body.selection-mode .artifact-link, body.selection-mode .visibility-select, body.selection-mode .row-action {
   pointer-events: none; opacity: .5;
+}
+
+@media (min-width: 760px) {
+  .selection-actions { min-width: 58px; justify-content: flex-end; }
 }
 
 @media (min-width: 901px) {
