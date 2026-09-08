@@ -237,6 +237,9 @@ describe("worker bootstrap", () => {
     expect(body).toContain("try { await refreshArchive(); } catch {}");
     expect(body).toContain("history.replaceState(null, '', archivePath);");
     expect(body).toContain("mobilePreviewObserver?.disconnect();");
+    expect(body).toContain("const previewsSuspended = suspendArchivePreviews();");
+    expect(body).toContain("setStatus(null, 'Loading archive...');");
+    expect(body).toContain("controller.abort(), 12000");
     expect(body).toContain("navigateArchive(link.href, 'push');");
     expect(body).toContain("addEventListener('popstate'");
     expect(body).toContain("if (archiveLoading) return;");

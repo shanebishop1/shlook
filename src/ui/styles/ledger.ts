@@ -71,6 +71,7 @@ export function ledgerStyles(): string {
 .pagination { display: flex; justify-content: space-between; padding-top: 18px; }
 .pagination a { color: var(--accent); font-size: 12px; font-weight: 650; text-decoration: none; }
 .pagination a:hover { text-decoration: underline; }
+.pagination[aria-busy="true"] { opacity: .55; pointer-events: none; }
 
 @media (max-width: 1080px) {
   th:nth-child(6), .artifact-row td:nth-child(6) { display: none; }

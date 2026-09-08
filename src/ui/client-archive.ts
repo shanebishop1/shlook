@@ -122,38 +122,57 @@ const filterRecords = () => {
   }
   empty.hidden = visible !== 0;
 };
+const suspendArchivePreviews = () => {
+  if (innerWidth >= 901) return false;
+  mobilePreviewObserver?.disconnect();
+  document.querySelectorAll('.ledger iframe[src]').forEach((frame) => frame.removeAttribute('src'));
+  return true;
+};
+const resumeArchivePreviews = () => {
+  if (innerWidth >= 901 || mobilePreviewObserver === null) return;
+  document.querySelectorAll('[data-record] .preview-frame:not([hidden])').forEach((frame) => {
+    mobilePreviewObserver.observe(frame.parentElement);
+  });
+};
 const refreshArchive = async (path = '/', historyMode = 'replace') => {
   const url = new URL(path, location.origin);
   if (url.origin !== location.origin) throw new Error('Archive navigation was blocked.');
   const archivePath = url.pathname + url.search;
-  const response = await fetch(archivePath);
-  if (!response.ok) throw new Error('Archive refresh failed.');
-  const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
-  const nextBody = nextDocument.querySelector('.ledger tbody');
-  const nextCount = nextDocument.querySelector('[data-count]');
-  const nextPagination = nextDocument.querySelector('.pagination');
-  if (!nextBody || !nextCount || !nextPagination) throw new Error('Archive refresh failed.');
-  if (innerWidth < 901) {
-    mobilePreviewObserver?.disconnect();
-    document.querySelectorAll('.ledger iframe[src]').forEach((frame) => frame.removeAttribute('src'));
+  const previewsSuspended = suspendArchivePreviews();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(archivePath, { credentials: 'same-origin', signal: controller.signal });
+    if (!response.ok) throw new Error('Archive refresh failed.');
+    const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const nextBody = nextDocument.querySelector('.ledger tbody');
+    const nextCount = nextDocument.querySelector('[data-count]');
+    const nextPagination = nextDocument.querySelector('.pagination');
+    if (!nextBody || !nextCount || !nextPagination) throw new Error('Archive refresh failed.');
+    document.querySelector('.ledger tbody').replaceWith(nextBody);
+    count.textContent = nextCount.textContent;
+    pagination.innerHTML = nextPagination.innerHTML;
+    records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
+    bindSelectionItems(nextBody);
+    bindPreviewImages(nextBody);
+    document.querySelector('input[data-search]').value = '';
+    setMenuValue(filterMenu, 'all');
+    filterRecords();
+    if (historyMode === 'push') history.pushState(null, '', archivePath);
+    else if (historyMode === 'replace') history.replaceState(null, '', archivePath);
+  } catch (error) {
+    if (previewsSuspended) resumeArchivePreviews();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  document.querySelector('.ledger tbody').replaceWith(nextBody);
-  count.textContent = nextCount.textContent;
-  pagination.innerHTML = nextPagination.innerHTML;
-  records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
-  bindSelectionItems(nextBody);
-  bindPreviewImages(nextBody);
-  document.querySelector('input[data-search]').value = '';
-  setMenuValue(filterMenu, 'all');
-  filterRecords();
-  if (historyMode === 'push') history.pushState(null, '', archivePath);
-  else if (historyMode === 'replace') history.replaceState(null, '', archivePath);
 };
 let archiveLoading = false;
 const navigateArchive = async (path, historyMode) => {
   if (archiveLoading) return;
   archiveLoading = true;
   pagination.setAttribute('aria-busy', 'true');
+  setStatus(null, 'Loading archive...');
   try {
     await refreshArchive(path, historyMode);
     scrollTo({ top: 0, behavior: innerWidth < 901 || reduceMotion.matches ? 'auto' : 'smooth' });
