@@ -3,13 +3,33 @@ import { loadPublishInput, type PublishInput } from "../../cli-files.ts";
 
 import { api, authenticatedFetch, responseData } from "../http.ts";
 import { CliError } from "../errors.ts";
-import { origin } from "../origins.ts";
+import { origin, privateOrigin } from "../origins.ts";
 import type { CliDependencies } from "../types.ts";
 
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function encodedPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+function finalizeResult(value: unknown, id: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new CliError(
+      "invalid_api_response",
+      "finalize response did not include the published asset",
+    );
+  const asset = (value as { asset?: unknown }).asset;
+  if (
+    typeof asset !== "object" ||
+    asset === null ||
+    Array.isArray(asset) ||
+    (asset as { id?: unknown }).id !== id
+  )
+    throw new CliError(
+      "invalid_api_response",
+      "finalize response did not include the published asset",
+    );
+  return value as Record<string, unknown>;
 }
 
 export async function publish(
@@ -68,10 +88,17 @@ export async function publish(
       files.push({ path: file.path, uploadId: uploaded.file.uploadId });
     }
     stage = "finalize";
-    return await api(dependencies, `/api/assets/${id}/finalize`, "POST", {
-      entrypoint: input.entrypoint,
-      files,
-    });
+    const finalized = finalizeResult(
+      await api(dependencies, `/api/assets/${id}/finalize`, "POST", {
+        entrypoint: input.entrypoint,
+        files,
+      }),
+      id,
+    );
+    return {
+      ...finalized,
+      url: `${privateOrigin(dependencies)}/assets/${id}/`,
+    };
   } catch {
     let cleanupSucceeded = false;
     try {

@@ -2,7 +2,14 @@
 import { expect, test, vi } from "vitest";
 
 import { runCli } from "../cli";
-import { DEFAULT_ENV, DEFAULT_ORIGIN, assetId, harness, uploadId } from "./test-harness.ts";
+import {
+  DEFAULT_ENV,
+  DEFAULT_ORIGIN,
+  assetId,
+  harness,
+  storedCredential,
+  uploadId,
+} from "./test-harness.ts";
 
 test("publish is private, rejects ancestor symlinks, and deletes failed creates", async () => {
   const directory = "/artifact";
@@ -58,6 +65,12 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
     files: [{ path: "index.html", uploadId }],
   });
   expect(JSON.parse(context.stdout[0]).data.asset.visibility).toBe("private");
+  expect(JSON.parse(context.stdout[0]).data.url).toBe(
+    `${DEFAULT_ORIGIN.replace("shlook.", "private.")}/assets/${assetId}/`,
+  );
+  expect(new URL("styles/main.css", JSON.parse(context.stdout[0]).data.url).pathname).toBe(
+    `/assets/${assetId}/styles/main.css`,
+  );
 
   const rejected = harness({
     fetch,
@@ -91,6 +104,82 @@ test("publish is private, rejects ancestor symlinks, and deletes failed creates"
     code: "publish_failed",
     details: { assetId, cleanup: { attempted: true, succeeded: true } },
   });
+});
+
+test("publish reports the explicitly configured private origin", async () => {
+  const privateOrigin = "https://preview-worker.user.workers.dev/";
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/assets") && init?.method === "POST") {
+      return Response.json({ asset: { id: assetId } }, { status: 201 });
+    }
+    if (init?.method === "PUT") return Response.json({ file: { uploadId } }, { status: 201 });
+    return Response.json({ asset: { id: assetId, state: "live" } });
+  });
+  const context = harness({
+    fetch,
+    env: {
+      CF_ACCESS_CLIENT_ID: "test-id",
+      CF_ACCESS_CLIENT_SECRET: "test-secret",
+      SHLOOK_API_ORIGIN: "https://owner-worker.user.workers.dev",
+      SHLOOK_PRIVATE_ORIGIN: privateOrigin,
+      SHLOOK_PUBLIC_ORIGIN: "https://public-worker.user.workers.dev",
+      SHLOOK_SHARE_ORIGIN: "https://share-worker.user.workers.dev",
+    },
+    loadPublishInput: vi.fn(async () => ({
+      entrypoint: "index.html",
+      files: [
+        {
+          path: "index.html",
+          bytes: new TextEncoder().encode("safe"),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+    })),
+  });
+
+  expect(
+    await runCli(
+      ["publish", "/artifact", "--name", "Workers preview", "--json"],
+      context.dependencies,
+    ),
+  ).toBe(0);
+  expect(JSON.parse(context.stdout[0]).data.url).toBe(`${privateOrigin}assets/${assetId}/`);
+  expect(fetch.mock.calls[0][0]).toBe("https://owner-worker.user.workers.dev/api/assets");
+});
+
+test("publish resolves the private viewing URL from a stored connection", async () => {
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === "PUT") return Response.json({ file: { uploadId } }, { status: 201 });
+    if (init?.method === "POST" && String(input).endsWith("/api/assets"))
+      return Response.json({ asset: { id: assetId } }, { status: 201 });
+    return Response.json({ asset: { id: assetId, state: "live" } });
+  });
+  const context = harness({
+    env: {},
+    fetch,
+    loadConnection: vi.fn(async () => storedCredential),
+    loadPublishInput: vi.fn(async () => ({
+      entrypoint: "index.html",
+      files: [
+        {
+          path: "index.html",
+          bytes: new TextEncoder().encode("safe"),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+    })),
+  });
+
+  expect(
+    await runCli(
+      ["publish", "/artifact", "--name", "Stored preview", "--json"],
+      context.dependencies,
+    ),
+  ).toBe(0);
+  expect(JSON.parse(context.stdout[0]).data.url).toBe(
+    `https://private.${storedCredential.domain}/assets/${assetId}/`,
+  );
 });
 
 test("publish requires a bounded short name before reading files or calling the API", async () => {
