@@ -108,9 +108,21 @@ export function runtimeHarness(overrides: Record<string, unknown> = {}) {
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     events.push(`fetch:${String(input)}`);
     expect(init?.redirect).toBe("manual");
-    return String(input).endsWith("/health")
-      ? Response.json({ ok: true, service: "shlook" })
-      : Response.json({ error: "not_found" }, { status: 404 });
+    const url = new URL(String(input));
+    const authenticated = new Headers(init?.headers).has("CF-Access-Client-Id");
+    if (url.pathname === "/health") {
+      return authenticated
+        ? Response.json({ ok: true, service: "shlook" })
+        : new Response(null, { status: 403 });
+    }
+    if (
+      (url.origin === "https://shlook.example.com" ||
+        url.origin === "https://private.example.com") &&
+      !authenticated
+    ) {
+      return new Response(null, { status: 403 });
+    }
+    return Response.json({ error: "not_found" }, { status: 404 });
   });
   let persistedCredential:
     | { domain: string; accessClientId: string; accessClientSecret: string }

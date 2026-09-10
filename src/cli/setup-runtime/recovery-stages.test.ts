@@ -84,14 +84,26 @@ test.each([
     return value;
   });
   let failedFetches = 0;
-  const fetch = vi.fn(async (url: string | URL | Request) => {
-    if (stage === "verification" && failedFetches < 12) {
+  const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (stage === "verification" && failedFetches < 36) {
       failedFetches += 1;
       return new Response(null, { status: 403 });
     }
-    return String(url).endsWith("/health")
-      ? Response.json({ ok: true })
-      : Response.json({ error: "not_found" }, { status: 404 });
+    const target = new URL(String(url));
+    const authenticated = new Headers(init?.headers).has("CF-Access-Client-Id");
+    if (target.pathname === "/health") {
+      return authenticated
+        ? Response.json({ ok: true, service: "shlook" })
+        : new Response(null, { status: 403 });
+    }
+    if (
+      (target.origin === "https://shlook.example.com" ||
+        target.origin === "https://private.example.com") &&
+      !authenticated
+    ) {
+      return new Response(null, { status: 403 });
+    }
+    return Response.json({ error: "not_found" }, { status: 404 });
   });
   const context = runtimeHarness({
     applyCloudflareSetup,

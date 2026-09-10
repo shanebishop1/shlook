@@ -20,16 +20,38 @@ test("apply verifies both protected origins and persists credentials only after 
 
   expect(context.fetch.mock.calls.map((call) => String(call[0]))).toEqual([
     "https://shlook.example.com/health",
+    "https://shlook.example.com/",
     "https://private.example.com/",
+    "https://private.example.com/",
+    "https://public.example.com/",
+    "https://share.example.com/",
   ]);
-  for (const call of context.fetch.mock.calls) {
+  const authenticatedCalls = context.fetch.mock.calls.filter(
+    (call) => call[1]?.headers !== undefined,
+  );
+  expect(authenticatedCalls).toHaveLength(2);
+  for (const call of authenticatedCalls) {
     const headers = new Headers(call[1]?.headers);
     expect(headers.get("CF-Access-Client-Id")).toBe("access-client-id");
     expect(headers.get("CF-Access-Client-Secret")).toBe(ACCESS_SECRET);
   }
-  expect(context.events.slice(-3)).toEqual([
+  expect(context.fetch.mock.calls.filter((call) => call[1]?.headers === undefined)).toHaveLength(4);
+  const publicShareCalls = context.fetch.mock.calls.filter((call) =>
+    ["https://public.example.com/", "https://share.example.com/"].includes(String(call[0])),
+  );
+  expect(publicShareCalls).toHaveLength(2);
+  for (const call of publicShareCalls) {
+    expect(call[1]?.headers).toBeUndefined();
+    expect(JSON.stringify(call[1])).not.toContain("access-client-id");
+    expect(JSON.stringify(call[1])).not.toContain(ACCESS_SECRET);
+  }
+  expect(context.events.slice(-7)).toEqual([
     "fetch:https://shlook.example.com/health",
+    "fetch:https://shlook.example.com/",
     "fetch:https://private.example.com/",
+    "fetch:https://private.example.com/",
+    "fetch:https://public.example.com/",
+    "fetch:https://share.example.com/",
     "persist",
   ]);
   expect(context.persistConnection).toHaveBeenCalledWith({
@@ -111,7 +133,7 @@ test("partial command or verification failure never persists a connection", asyn
   }
   expect(error).toBeInstanceOf(SetupRuntimeError);
   expect(error).toMatchObject({ code: "setup_verification_failed" });
-  expect(verificationFailure.dependencies.fetch).toHaveBeenCalledTimes(12);
+  expect(verificationFailure.dependencies.fetch).toHaveBeenCalledTimes(36);
   expect(verificationFailure.persistConnection).not.toHaveBeenCalled();
   expect(
     verificationFailure.fileSystem.files.has(
@@ -119,10 +141,24 @@ test("partial command or verification failure never persists a connection", asyn
     ),
   ).toBe(true);
 
-  verificationFailure.dependencies.fetch.mockImplementation(async (url: string | URL | Request) =>
-    String(url).endsWith("/health")
-      ? Response.json({ ok: true })
-      : Response.json({ error: "not_found" }, { status: 404 }),
+  verificationFailure.dependencies.fetch.mockImplementation(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      const target = new URL(String(url));
+      const authenticated = new Headers(init?.headers).has("CF-Access-Client-Id");
+      if (target.pathname === "/health") {
+        return authenticated
+          ? Response.json({ ok: true, service: "shlook" })
+          : new Response(null, { status: 403 });
+      }
+      if (
+        (target.origin === "https://shlook.example.com" ||
+          target.origin === "https://private.example.com") &&
+        !authenticated
+      ) {
+        return new Response(null, { status: 403 });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
   );
   await applySetupRuntime(
     { domain: "example.com", ownerEmail: "owner@example.com" },
