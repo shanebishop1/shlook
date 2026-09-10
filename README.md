@@ -1,8 +1,8 @@
 # shlook
 
 `shlook` is a self-hosted Cloudflare publication pipeline for agent-created HTML, static sites,
-and raster images. The CLI sends artifacts to an owner-authenticated API; publications remain
-private until an operator explicitly enables public or secret-link sharing.
+and raster images. The CLI and owner UI send artifacts to an owner-authenticated API;
+publications remain private until an operator explicitly enables public or secret-link sharing.
 
 ### Key capabilities
 
@@ -56,13 +56,22 @@ All four surfaces use the same D1 database and private R2 bucket. D1 stores meta
 lifecycle state; R2 stores artifact bytes and must not have an `r2.dev` URL or public custom
 domain. Apply the packaged D1 migrations before serving traffic.
 
-Untrusted artifacts can contain active HTML and JavaScript. Normal artifact views must never
-share an origin with the owner UI or mutation API: same-origin artifact code could send
-owner-authorized API requests. The archive's authenticated `/preview/assets/**` route is a
-narrow exception whose iframe and response policies force an opaque sandbox, deny network and
-form actions, and block cross-site or passive browser-resource requests to `/api/**`. General
-one-origin path multiplexing such as `/api`, `/private`, and `/share` on one hostname is not
-supported; paths alone are not a browser security boundary.
+Artifacts can contain active HTML and JavaScript. Normal artifact views must never share an
+origin with the owner UI or mutation API: same-origin artifact code could send owner-authorized
+API requests. The archive's authenticated `/preview/assets/<asset-id>/**` route is a narrow
+exception: its iframe uses an opaque sandbox origin to isolate the preview from the owner UI and
+API. The preview CSP permits inline scripts and styles plus classic same-publication
+assets under that artifact's own `/preview/assets/<asset-id>/` prefix, while blocking arbitrary
+external subresources, fetches, forms, and frames. This is not offline execution or malware
+proofing: preview code can self-navigate, and authorized agents and artifact code should still be
+trusted to handle their own contents. No browser rendering service is involved. External module
+graphs work on public and secret-link delivery through noncredentialed CORS. They are unsupported
+for private delivery because those responses lack the CORS header module loading requires, and for
+owner previews because the opaque sandbox cannot make credentialed Access requests; inline scripts
+and classic same-publication assets remain supported.
+
+General one-origin path multiplexing such as `/api`, `/private`, and `/share` on one hostname is
+not supported; paths alone are not a browser security boundary.
 
 ## Source map and limits
 
@@ -191,6 +200,11 @@ and accept up to 500 characters. Both are stored in D1, returned by the owner AP
 and searched in the owner archive. Existing assets are assigned their prior eight-character ID
 prefix when the metadata migration is applied.
 
+`shlook publish --json` returns `data.url` as the authenticated private viewing URL. It is not a
+public or secret-link URL. For static bundles, use relative asset URLs such as `./app.js` and
+`./styles.css`; do not use root-relative `/assets/...` URLs, because each delivery surface has its
+own publication prefix.
+
 The creation API accepts the same metadata as JSON:
 
 ```json
@@ -211,16 +225,18 @@ Unknown routes and artifacts unavailable to the requested audience return `404`.
 
 ## Development
 
-Requirements: Node.js 24 and pnpm 11.17.0.
+Requirements: Node.js 24, pnpm 11.17.0, and the Playwright Chromium runtime.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm exec playwright install --with-deps chromium
 pnpm fmt
 pnpm run ci
 ```
 
 Oxlint owns linting and Oxfmt owns formatting. The quality gate is `pnpm run ci`: it runs lint,
-format checking, strict TypeScript checking, tests, and a Wrangler dry-run build.
+format checking, strict TypeScript checking (including browser tests), tests, Chromium browser
+regressions, and a Wrangler dry-run build.
 
 ## License
 

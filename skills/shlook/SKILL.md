@@ -19,11 +19,21 @@ infer artifact content in this skill.
    colliding fixed-name resources. Manual deployment remains available for other topologies.
 4. Choose a concise, human-readable asset name and run
    `shlook publish <path> --name "<short name>" [--description "<what it is>"] --json`.
-   Publication defaults private.
+   Publication defaults private. The JSON `data.url` is the authenticated private viewing URL,
+   not a public or secret-link URL. Static bundles must use relative asset URLs, not root-relative
+   `/assets/...` URLs.
 5. Run `shlook verify <asset-id> --json` to verify owner metadata and the authenticated private
    URL. Before reporting a public or capability URL, perform the separate audience checks in
-   `references/verification.md`.
+   `references/verification.md`; do not make an artifact public to work around private delivery
+   limits.
 6. Change visibility, create a secret link, or set expiry only when explicitly requested.
+
+Owner archive previews are live HTML in opaque sandboxed iframes, not browser-rendered screenshots
+or malware scanning. Inline scripts/styles and classic same-publication assets are supported;
+the preview CSP blocks arbitrary external subresources, fetches, forms, and frames. External
+module graphs are supported on public and secret-link delivery through noncredentialed CORS, but
+not on private delivery or owner previews. Preview code can self-navigate, so authorized agents
+and artifact code should still be trusted with their own contents.
 
 ## References
 

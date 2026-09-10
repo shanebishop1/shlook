@@ -10,6 +10,13 @@ lifecycle changes. It performs two authenticated checks: owner metadata must rep
 and a `GET` of the private artifact entrypoint must succeed. It does not test public,
 secret-link, expired, deleted, or unauthenticated audiences.
 
+`setup --apply` separately checks expected routing and denial responses: authenticated
+owner `/health` is `{"ok":true,"service":"shlook"}`, authenticated private `/` is
+`404 {"error":"not_found"}`, unauthenticated owner and private requests are denied, and
+unauthenticated public and share `/` requests are `404 {"error":"not_found"}`. These checks do
+not verify an artifact's upload, visibility, capability, expiry, or deletion lifecycle; perform
+those checks manually below.
+
 Use `shlook show <asset-id> --json` to confirm that `name` and optional `description` match the
 values supplied at publication.
 
@@ -26,7 +33,7 @@ Perform audience checks separately with credentials appropriate to each audience
 - Share expiry: share access returns `404` while private owner access remains.
 - Hard expiry or deletion: all artifact access returns `404`.
 
-Also verify the deployment boundary:
+Also verify routing and delivery boundaries:
 
 1. Owner and private origins require the configured owner identity or agent service token.
 2. Public- and share-origin requests never receive an Access challenge.
@@ -35,8 +42,11 @@ Also verify the deployment boundary:
 4. Owner `/api/**` paths are unavailable on private, public, and share origins.
 5. Normal artifact paths are unavailable on the owner origin except for its documented redirect
    behavior. Authenticated `/preview/assets/<asset-id>/**` succeeds only on the owner origin and
-   returns CSP with an opaque `sandbox`, `connect-src 'none'`, `form-action 'none'`, and
-   `frame-ancestors 'self'`.
+   is loaded in an opaque sandbox that isolates the owner UI/API. Its preview CSP permits inline
+   scripts/styles and classic same-publication assets under that prefix, while blocking arbitrary
+   external subresources, fetches, forms, and frames. This is not offline or malware-proof;
+   self-navigation remains possible, and authorized agents/artifact code should be trusted with
+   their own contents.
 6. Any unused `workers.dev` and preview URLs are disabled; in no-domain mode, Access is enabled
    directly on the owner/private production `workers.dev` routes.
 

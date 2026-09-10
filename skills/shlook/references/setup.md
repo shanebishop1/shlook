@@ -79,8 +79,15 @@ owned by its manifest, writes the deployment configuration, applies D1 migration
 the Worker and four custom domains with `SHLOOK_SECRET_ENCRYPTION_KEY` supplied in the same initial
 deployment through a temporary owner-only Wrangler `--secrets-file`. This prevents exposing a
 route-bearing incomplete Worker. Apply then verifies owner and private Access and stores the
-generated runtime connection. The broad provisioning token is passed only
+generated runtime connection. During discovery, setup also checks the R2 managed domain (`r2.dev`)
+and every custom R2 domain; any enabled public exposure is rejected, including on an intentional
+resource adoption. The broad provisioning token is passed only
 to the setup operations and a restricted Wrangler child environment; it is never persisted.
+
+Apply's deployment check requires the exact owner `/health` response, exact authenticated private
+root `404` (`{"error":"not_found"}`), unauthenticated denial on owner and private, and exact
+unauthenticated `404` responses on public and share roots. Setup checks expected responses at each
+origin; it does not replace dashboard policy/R2 checks or real artifact lifecycle verification.
 
 Setup writes mode-restricted files below `${XDG_CONFIG_HOME:-$HOME/.config}/shlook`:
 
