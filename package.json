@@ -48,7 +48,7 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint src",
     "prepack": "pnpm build:cli",
-    "test": "vitest run && node --test src/cli-files.node-check.ts",
+    "test": "vitest run && node --test src/cli-files.node-check.ts test/client-archive.node-test.ts",
     "typecheck": "pnpm typecheck:worker && pnpm typecheck:cli",
     "typecheck:cli": "tsc --project tsconfig.cli.json",
     "typecheck:worker": "tsc --project tsconfig.worker.json"
@@ -60,6 +60,7 @@
     "@cloudflare/vitest-plugin": "1.1.0",
     "@cloudflare/workers-types": "5.20260825.1",
     "@types/node": "24.3.0",
+    "jsdom": "29.0.1",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",

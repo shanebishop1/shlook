@@ -138,7 +138,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain("requestAnimationFrame(resize)");
     expect(body).toContain("const scale = media.clientWidth / renderWidth;");
     expect(body).toContain("frame.src = frame.dataset.src;");
-    expect(body).toContain("filterRecords();\nbindPreviewImages();");
+    expect(body).toContain("filterRecords();\ninitializeArchiveRows();");
     expect(body).toContain(".preview-media { position: relative; overflow: hidden; }");
     expect(body).toContain("pointer-events: none; transform-origin: top left;");
     expect(body).toContain(".preview-frame { background: #fff; }");

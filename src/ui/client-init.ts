@@ -43,7 +43,6 @@ actionConfirm.querySelector('[data-action-confirm-submit]').addEventListener('cl
 });
 uploadDialog.addEventListener('click', (event) => { event.stopPropagation(); });
 uploadDialog.addEventListener('keydown', (event) => trapDialogFocus(uploadDialog, event));
-document.querySelectorAll('[data-confirm]').forEach((confirmation) => confirmation.addEventListener('keydown', (event) => trapDialogFocus(confirmation, event)));
 document.addEventListener('click', async (event) => {
   const request = event.target.closest('[data-request-delete]');
   if (request) {
@@ -85,26 +84,8 @@ document.addEventListener('click', async (event) => {
     closeConfirmation(confirmation);
   }
 }, true);
-document.querySelectorAll('input[data-iso]').forEach((input) => {
-  if (!input.dataset.iso) return;
-  const date = new Date(input.dataset.iso);
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  input.value = local.toISOString().slice(0, 16);
-});
-const localDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const localTime = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-document.querySelectorAll('[data-local-time]').forEach((element) => {
-  const date = new Date(element.dateTime);
-  if (Number.isNaN(date.getTime())) return;
-  const zone = document.createElement('span');
-  zone.className = 'meta-sub';
-  zone.textContent = localTime.format(date);
-  element.textContent = localDate.format(date);
-  element.append(zone);
-});
 uploadInput.required = false;
 uploadInput.addEventListener('change', () => chooseUploadFile(uploadInput.files && uploadInput.files[0]));
-bindSelectionItems();
 document.addEventListener('click', (event) => {
   if (!selectMode) return;
   const row = event.target.closest('[data-record]');
@@ -339,5 +320,5 @@ document.addEventListener('click', async (event) => {
   finally { if (document.contains(button)) button.disabled = false; }
 });
 filterRecords();
-bindPreviewImages();`;
+initializeArchiveRows();`;
 }

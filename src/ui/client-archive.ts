@@ -85,6 +85,29 @@ const releaseDetailPreview = (detail) => {
   detail.querySelector('[data-preview-large] [data-preview-fallback]')?.removeAttribute('src');
 };
 const bindSelectionItems = (root = document) => root.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('change', syncSelection));
+const localDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const localTime = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+const initializeArchiveRows = (root = document) => {
+  root.querySelectorAll('input[data-iso]').forEach((input) => {
+    if (!input.dataset.iso) return;
+    const date = new Date(input.dataset.iso);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    input.value = local.toISOString().slice(0, 16);
+  });
+  root.querySelectorAll('[data-local-time]').forEach((element) => {
+    const date = new Date(element.dateTime);
+    if (Number.isNaN(date.getTime())) return;
+    const zone = document.createElement('span');
+    zone.className = 'meta-sub';
+    zone.textContent = localTime.format(date);
+    element.textContent = localDate.format(date);
+    element.append(zone);
+  });
+  bindSelectionItems(root);
+  bindPreviewImages(root);
+  root.querySelectorAll('[data-confirm]').forEach((confirmation) => confirmation.addEventListener('keydown', (event) => trapDialogFocus(confirmation, event)));
+  syncSelection();
+};
 const closeMenus = (except) => {
   document.querySelectorAll('[data-menu-list]:not([hidden])').forEach((list) => {
     if (list === except) return;
@@ -153,8 +176,7 @@ const refreshArchive = async (path = '/', historyMode = 'replace') => {
     count.textContent = nextCount.textContent;
     pagination.innerHTML = nextPagination.innerHTML;
     records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
-    bindSelectionItems(nextBody);
-    bindPreviewImages(nextBody);
+    initializeArchiveRows(nextBody);
     document.querySelector('input[data-search]').value = '';
     setMenuValue(filterMenu, 'all');
     filterRecords();
