@@ -19,6 +19,17 @@ interface R2Record {
   name?: unknown;
 }
 
+interface R2ManagedDomainRecord {
+  bucketId?: unknown;
+  domain?: unknown;
+  enabled?: unknown;
+}
+
+interface R2CustomDomainRecord {
+  domain?: unknown;
+  enabled?: unknown;
+}
+
 interface AccessApplicationRecord {
   id?: unknown;
   name?: unknown;
@@ -93,7 +104,37 @@ export async function inspectR2(client: CloudflareApiClient, accountId: string) 
         (value): value is R2Record => isRecord(value) && value.name === CLOUDFLARE_SETUP_NAMES.r2,
       ),
     );
-    if (exact !== undefined) return { name: CLOUDFLARE_SETUP_NAMES.r2 };
+    if (exact !== undefined) {
+      const bucketPath = `/accounts/${accountId}/r2/buckets/${encodeURIComponent(CLOUDFLARE_SETUP_NAMES.r2)}`;
+      const [managedEnvelope, customEnvelope] = await Promise.all([
+        client.request(`${bucketPath}/domains/managed`),
+        client.request(`${bucketPath}/domains/custom`),
+      ]);
+      const managed = objectResult(managedEnvelope) as R2ManagedDomainRecord;
+      if (
+        !nonemptyString(managed.bucketId) ||
+        !nonemptyString(managed.domain) ||
+        typeof managed.enabled !== "boolean"
+      ) {
+        invalidResponse();
+      }
+      if (managed.enabled) resourceConflict();
+
+      const customResult = objectResult(customEnvelope);
+      if (!Array.isArray(customResult.domains)) invalidResponse();
+      for (const value of customResult.domains) {
+        if (
+          !isRecord(value) ||
+          !nonemptyString(value.domain) ||
+          typeof value.enabled !== "boolean"
+        ) {
+          invalidResponse();
+        }
+        const custom = value as R2CustomDomainRecord;
+        if (custom.enabled) resourceConflict();
+      }
+      return { name: CLOUDFLARE_SETUP_NAMES.r2 };
+    }
     const next = envelope.result_info?.cursor;
     if (next === undefined || next === null || next === "") return undefined;
     if (!nonemptyString(next) || next === cursor) {

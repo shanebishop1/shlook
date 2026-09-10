@@ -56,6 +56,87 @@ test("reuses exact existing resources and policies without mutation", async () =
   expect(serialized).not.toContain("known-secret");
 });
 
+test.each([
+  {
+    label: "a public managed domain",
+    response: envelope({
+      bucketId: "bucket-id",
+      domain: "pub-bucket-id.r2.dev",
+      enabled: true,
+    }),
+    endpoint: "managed",
+  },
+  {
+    label: "an enabled custom domain",
+    response: envelope({ domains: [{ domain: "assets.example.com", enabled: true }] }),
+    endpoint: "custom",
+  },
+])("rejects R2 reuse and adoption with $label", async ({ response, endpoint }) => {
+  const context = harness(({ url }) =>
+    url.pathname.endsWith(`/r2/buckets/shlook-assets/domains/${endpoint}`)
+      ? response.clone()
+      : existingStateResponse(url),
+  );
+
+  for (const setupInput of [input, { ...input, adoptExisting: true }]) {
+    const error = await capturedError(planSetup(setupInput, context.dependencies));
+    expect(error).toMatchObject({
+      code: "setup_resource_conflict",
+      message: "an existing Cloudflare resource conflicts with the required shlook setup",
+    });
+  }
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+test.each([
+  { label: "permission denied", status: 403, capability: "missing_permission" },
+  { label: "unavailable", status: 503, capability: "unavailable" },
+])("blocks R2 adoption when the exposure probe is $label", async ({ status, capability }) => {
+  const context = harness(({ url }) =>
+    url.pathname.endsWith("/r2/buckets/shlook-assets/domains/managed")
+      ? new Response("probe failed", { status })
+      : existingStateResponse(url),
+  );
+
+  const plan = await planSetup({ ...input, adoptExisting: true }, context.dependencies);
+
+  expect(plan.ready).toBe(false);
+  expect(plan.capabilities.r2).toEqual({ status: capability, httpStatus: status });
+  expect(plan.actions).toContainEqual(
+    expect.objectContaining({
+      resource: "r2",
+      operation: "blocked",
+      reason: "capability_unavailable",
+    }),
+  );
+  expect(context.requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+test.each([
+  {
+    label: "managed domain",
+    endpoint: "managed",
+    response: envelope({ bucketId: "bucket-id", domain: "pub-bucket-id.r2.dev" }),
+  },
+  {
+    label: "custom domain",
+    endpoint: "custom",
+    response: envelope({ domains: [{ domain: "assets.example.com", enabled: "false" }] }),
+  },
+])("rejects an invalid R2 $label exposure probe", async ({ endpoint, response }) => {
+  const context = harness(({ url }) =>
+    url.pathname.endsWith(`/r2/buckets/shlook-assets/domains/${endpoint}`)
+      ? response.clone()
+      : existingStateResponse(url),
+  );
+
+  for (const setupInput of [input, { ...input, adoptExisting: true }]) {
+    expect((await capturedError(planSetup(setupInput, context.dependencies))).code).toBe(
+      "cloudflare_response_invalid",
+    );
+  }
+});
+
 test("fails closed when a deployment manifest target or resource ID does not match", async () => {
   const context = harness(({ url }) => existingStateResponse(url));
   const adopted = await planSetup({ ...input, adoptExisting: true }, context.dependencies);

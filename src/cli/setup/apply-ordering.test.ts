@@ -84,6 +84,11 @@ test("creates resources in order and applies exact email and service-token polic
     `/client/v4/accounts/${ACCOUNT_ID}/access/apps/shlook-private-id/policies`,
   ]);
   expect(mutations.map((request) => request.method)).toEqual(Array(9).fill("POST"));
+  expect(
+    context.requests.some((request) =>
+      request.url.pathname.includes("/r2/buckets/shlook-assets/domains/"),
+    ),
+  ).toBe(false);
   expect(mutationCountAtIntent).toBe(0);
   expect(mutationCountAtSecretSink).toBe(5);
   expect(statePersistence.saveIntent).toHaveBeenCalledOnce();

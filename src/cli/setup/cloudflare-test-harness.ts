@@ -77,6 +77,16 @@ export function baseResponse(url: URL): Response {
   }
   if (url.pathname.endsWith("/d1/database")) return page([]);
   if (url.pathname.endsWith("/r2/buckets")) return envelope({ buckets: [] });
+  if (url.pathname.endsWith("/r2/buckets/shlook-assets/domains/managed")) {
+    return envelope({
+      bucketId: "bucket-id",
+      domain: "pub-bucket-id.r2.dev",
+      enabled: false,
+    });
+  }
+  if (url.pathname.endsWith("/r2/buckets/shlook-assets/domains/custom")) {
+    return envelope({ domains: [] });
+  }
   if (url.pathname.endsWith("/access/apps")) return page([]);
   if (url.pathname.endsWith("/access/service_tokens")) return page([]);
   if (url.pathname.endsWith("/workers/services/shlook")) return new Response(null, { status: 404 });
@@ -137,6 +147,16 @@ export function existingStateResponse(url: URL): Response {
   }
   if (url.pathname.endsWith("/r2/buckets")) {
     return envelope({ buckets: [{ name: "shlook-assets" }] });
+  }
+  if (url.pathname.endsWith("/r2/buckets/shlook-assets/domains/managed")) {
+    return envelope({
+      bucketId: "bucket-id",
+      domain: "pub-bucket-id.r2.dev",
+      enabled: false,
+    });
+  }
+  if (url.pathname.endsWith("/r2/buckets/shlook-assets/domains/custom")) {
+    return envelope({ domains: [] });
   }
   if (url.pathname.endsWith("/access/apps")) return page([ownerApp, privateApp]);
   if (url.pathname.endsWith("/access/service_tokens")) {
