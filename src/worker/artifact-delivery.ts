@@ -1,8 +1,14 @@
-import { artifactHeaders, decodePath, readManifest, uploadKey } from "./artifact";
+import {
+  artifactHeaders,
+  decodePath,
+  previewContentSecurityPolicy,
+  readManifest,
+  uploadKey,
+} from "./artifact";
 import { deleteAsset } from "./cleanup";
 import type { Env } from "./environment";
+import { artifactAccess, deploymentConfig } from "./privacy";
 import { error } from "./responses";
-import { artifactAccess } from "./privacy";
 import type { AssetRow } from "./asset-store";
 
 export async function serveAsset(
@@ -10,6 +16,7 @@ export async function serveAsset(
   asset: AssetRow,
   encodedPath: string,
   preview = false,
+  cors = false,
 ): Promise<Response> {
   if (asset.state !== "live") return error("not_found", 404);
 
@@ -25,11 +32,11 @@ export async function serveAsset(
   if (object === null) return error("not_found", 404);
 
   const headers = artifactHeaders(object);
+  if (cors && !preview) headers.set("access-control-allow-origin", "*");
   if (preview) {
     headers.set(
       "content-security-policy",
-      "sandbox allow-scripts; connect-src 'none'; form-action 'none'; " +
-        "base-uri 'none'; frame-ancestors 'self'",
+      previewContentSecurityPolicy(deploymentConfig(env).ownerOrigin, asset.id),
     );
   }
   return new Response(object.body, { headers });
@@ -49,5 +56,7 @@ export async function serveWithPolicy(
     await deleteAsset(env, asset.id);
     return error("not_found", 404);
   }
-  return access === "allow" ? serveAsset(env, asset, path, preview) : error("not_found", 404);
+  return access === "allow"
+    ? serveAsset(env, asset, path, preview, mode === "public" || mode === "secret")
+    : error("not_found", 404);
 }

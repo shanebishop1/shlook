@@ -205,11 +205,31 @@ describe("privacy and lifecycle", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("<h1>private preview</h1>");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(policy).toContain("sandbox allow-scripts");
     expect(policy).not.toContain("allow-same-origin");
-    expect(policy).toContain("connect-src 'none'");
-    expect(policy).toContain("form-action 'none'");
-    expect(policy).toContain("frame-ancestors 'self'");
+    expect(policy).toBe(
+      [
+        "sandbox allow-scripts",
+        "default-src 'none'",
+        `script-src 'unsafe-inline' https://${ownerHost}/preview/assets/${asset.id}/`,
+        `style-src 'unsafe-inline' https://${ownerHost}/preview/assets/${asset.id}/`,
+        `img-src https://${ownerHost}/preview/assets/${asset.id}/ data: blob:`,
+        `font-src https://${ownerHost}/preview/assets/${asset.id}/ data:`,
+        `media-src https://${ownerHost}/preview/assets/${asset.id}/ blob:`,
+        "connect-src 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'self'",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "worker-src 'none'",
+      ].join("; "),
+    );
+    expect(policy).not.toContain(`https://${ownerHost}/api/`);
+    expect(policy).not.toContain(`https://${ownerHost}/assets/`);
+    expect(policy).not.toContain("https://evil.example");
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("requires Access for private-host artifacts", async () => {

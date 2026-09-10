@@ -52,6 +52,26 @@ export function manifestKey(id: string, manifestId: string): string {
   return `${assetPrefix(id)}manifests/${manifestId}.json`;
 }
 
+export function previewContentSecurityPolicy(ownerOrigin: string, id: string): string {
+  const previewPrefix = `${ownerOrigin}/preview/${assetPrefix(id)}`;
+  return [
+    "sandbox allow-scripts",
+    "default-src 'none'",
+    `script-src 'unsafe-inline' ${previewPrefix}`,
+    `style-src 'unsafe-inline' ${previewPrefix}`,
+    `img-src ${previewPrefix} data: blob:`,
+    `font-src ${previewPrefix} data:`,
+    `media-src ${previewPrefix} blob:`,
+    "connect-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'self'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "worker-src 'none'",
+  ].join("; ");
+}
+
 export function validateManifest(value: unknown, maxFiles = maxUploadFiles): Manifest | null {
   if (typeof value !== "object" || value === null) return null;
   const input = value as { entrypoint?: unknown; files?: unknown };
@@ -101,6 +121,7 @@ export function artifactHeaders(object: R2Object): Headers {
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", "private, no-store");
   headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
   const mediaType = headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
   if (["text/html", "application/xhtml+xml", "image/svg+xml"].includes(mediaType ?? "")) {
     headers.set(

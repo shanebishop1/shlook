@@ -148,6 +148,7 @@ describe("privacy and lifecycle", () => {
     const shared = await request(`/assets/${asset.id}/`, undefined, publicHost, undefined);
     expect(await shared.text()).toBe("<h1>public</h1>");
     expect(shared.headers.get("content-security-policy")).toContain("sandbox");
+    expect(shared.headers.get("referrer-policy")).toBe("no-referrer");
 
     const svg = await createAsset();
     const svgUpload = await uploadFile(svg.id, "image.svg", "<svg/>", "Image/SVG+XML");
@@ -161,5 +162,61 @@ describe("privacy and lifecycle", () => {
     expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
       404,
     );
+  });
+
+  it("grants CORS only to authorized public and secret artifact responses", async () => {
+    const privateAsset = await createLiveAsset("private");
+    const privateResponse = await request(`/assets/${privateAsset.id}/`, undefined, privateHost);
+    expect(privateResponse.status).toBe(200);
+    expect(privateResponse.headers.get("access-control-allow-origin")).toBeNull();
+
+    const publicAsset = await createLiveAsset("public");
+    expect(
+      (
+        await request(`/api/assets/${publicAsset.id}/visibility`, {
+          method: "PATCH",
+          body: JSON.stringify({ visibility: "public" }),
+        })
+      ).status,
+    ).toBe(200);
+    const publicResponse = await request(`/assets/${publicAsset.id}/`, undefined, publicHost, null);
+    expect(publicResponse.status).toBe(200);
+    expect(publicResponse.headers.get("access-control-allow-origin")).toBe("*");
+    expect(publicResponse.headers.get("access-control-allow-credentials")).toBeNull();
+
+    const secretAsset = await createLiveAsset("secret");
+    const issued = (await (
+      await request(`/api/assets/${secretAsset.id}/secret?mode=create`, { method: "POST" })
+    ).json()) as { url: string };
+    const secretResponse = await request(new URL(issued.url).pathname, undefined, shareHost, null);
+    expect(secretResponse.status).toBe(200);
+    expect(secretResponse.headers.get("access-control-allow-origin")).toBe("*");
+    expect(secretResponse.headers.get("access-control-allow-credentials")).toBeNull();
+
+    const inactivePublic = await createLiveAsset("inactive public");
+    expect(
+      (
+        await request(`/api/assets/${inactivePublic.id}/visibility`, {
+          method: "PATCH",
+          body: JSON.stringify({ visibility: "public" }),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(`/api/assets/${inactivePublic.id}/expiry`, {
+          method: "PATCH",
+          body: JSON.stringify({ shareExpiresAt: "2000-01-01T00:00:00.000Z" }),
+        })
+      ).status,
+    ).toBe(200);
+    const inactiveResponse = await request(
+      `/assets/${inactivePublic.id}/`,
+      undefined,
+      publicHost,
+      null,
+    );
+    expect(inactiveResponse.status).toBe(404);
+    expect(inactiveResponse.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
