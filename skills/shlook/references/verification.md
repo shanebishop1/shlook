@@ -7,7 +7,10 @@ all D1 migrations are applied.
 
 Run `shlook verify <asset-id> --json` after publication and after material visibility or
 lifecycle changes. It performs two authenticated checks: owner metadata must report `live`,
-and a `GET` of the private artifact entrypoint must succeed. It does not test public,
+and a `GET` of the private artifact entrypoint must succeed. CLI 0.2.6+ follows at most one `302`
+redirect to a file under the same private origin and artifact ID, without a query or fragment;
+other redirects are rejected without forwarding credentials. Upgrade older CLIs before verifying
+a deployment that canonicalizes entrypoint aliases. It does not test public,
 secret-link, expired, deleted, or unauthenticated audiences.
 
 `setup --apply` separately checks expected routing and denial responses: authenticated

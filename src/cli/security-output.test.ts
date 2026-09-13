@@ -116,6 +116,113 @@ test("Access-authenticated requests reject redirects without forwarding credenti
   }
 });
 
+test("verify follows one safe same-origin canonical artifact redirect", async () => {
+  const canonical = `https://private.example.com/assets/${assetId}/pages/index%20file.html`;
+  const probe = simulatedRedirectFetch((input) => {
+    const url = String(input);
+    if (url === `${DEFAULT_ORIGIN}/api/assets/${assetId}`)
+      return Response.json({ asset: { id: assetId, state: "live" } });
+    if (url === `https://private.example.com/assets/${assetId}/`)
+      return new Response(null, { status: 302, headers: { location: canonical } });
+    if (url === canonical) return new Response("verified", { status: 200 });
+    return new Response(null, { status: 500 });
+  });
+  const context = harness({ fetch: probe.fetch });
+
+  expect(await runCli(["verify", assetId, "--json"], context.dependencies)).toBe(0);
+  expect(JSON.parse(context.stdout[0])).toMatchObject({
+    data: { assetId, verified: true, status: 200 },
+  });
+  expect(probe.requests.map(({ url }) => url)).toEqual([
+    `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+    `https://private.example.com/assets/${assetId}/`,
+    canonical,
+  ]);
+  expect(
+    probe.requests.slice(1).every(({ headers }) => headers.has("CF-Access-Client-Secret")),
+  ).toBe(true);
+});
+
+test("verify rejects unexpected and chained redirects without following them", async () => {
+  const cases = [
+    {
+      location: "https://attacker.invalid/capture",
+      expectedRequests: [`https://private.example.com/assets/${assetId}/`],
+    },
+    {
+      location: `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+      expectedRequests: [`https://private.example.com/assets/${assetId}/`],
+    },
+    {
+      location: `https://private.example.com/assets/${assetId}/pages/index.html?unexpected=1`,
+      expectedRequests: [`https://private.example.com/assets/${assetId}/`],
+    },
+    {
+      location: `https://private.example.com/assets/${assetId}/pages/index.html`,
+      expectedRequests: [
+        `https://private.example.com/assets/${assetId}/`,
+        `https://private.example.com/assets/${assetId}/pages/index.html`,
+      ],
+      chain: true,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const probe = simulatedRedirectFetch((input) => {
+      const url = String(input);
+      if (url === `${DEFAULT_ORIGIN}/api/assets/${assetId}`)
+        return Response.json({ asset: { id: assetId, state: "live" } });
+      if (url === `https://private.example.com/assets/${assetId}/`)
+        return new Response(null, { status: 302, headers: { location: testCase.location } });
+      if (testCase.chain && url === testCase.location)
+        return new Response(null, {
+          status: 302,
+          headers: { location: `https://private.example.com/assets/${assetId}/other.html` },
+        });
+      return new Response(null, { status: 500 });
+    });
+    const context = harness({ fetch: probe.fetch });
+
+    expect(await runCli(["verify", assetId, "--json"], context.dependencies)).toBe(1);
+    expect(JSON.parse(context.stderr[0]).error).toMatchObject({
+      code: "verification_failed",
+      status: 302,
+    });
+    expect(probe.requests.map(({ url }) => url)).toEqual([
+      `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+      ...testCase.expectedRequests,
+    ]);
+    expect(probe.requests.every(({ headers }) => headers.has("CF-Access-Client-Secret"))).toBe(
+      true,
+    );
+  }
+});
+
+test("verify only follows canonical 302 redirects", async () => {
+  for (const status of [300, 301, 303, 304, 305, 306, 307, 308, 399]) {
+    const canonical = `https://private.example.com/assets/${assetId}/index.html`;
+    const probe = simulatedRedirectFetch((input) => {
+      const url = String(input);
+      if (url === `${DEFAULT_ORIGIN}/api/assets/${assetId}`)
+        return Response.json({ asset: { id: assetId, state: "live" } });
+      if (url === `https://private.example.com/assets/${assetId}/`)
+        return new Response(null, { status, headers: { location: canonical } });
+      return new Response("unexpected", { status: 200 });
+    });
+    const context = harness({ fetch: probe.fetch });
+
+    expect(await runCli(["verify", assetId, "--json"], context.dependencies)).toBe(1);
+    expect(JSON.parse(context.stderr[0]).error).toMatchObject({
+      code: "verification_failed",
+      status,
+    });
+    expect(probe.requests.map(({ url }) => url)).toEqual([
+      `${DEFAULT_ORIGIN}/api/assets/${assetId}`,
+      `https://private.example.com/assets/${assetId}/`,
+    ]);
+  }
+});
+
 test("owner API rejects the full 3xx status range", async () => {
   for (const status of [300, 301, 302, 303, 304, 305, 306, 307, 308, 399]) {
     const fetch = vi.fn(

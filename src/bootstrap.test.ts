@@ -228,7 +228,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain("Artifact archive");
     expect(body).toContain('<span class="count" data-count>1 artifact</span>');
     expect(body).not.toContain("count.textContent = visible");
-    expect(body).toContain('placeholder="Search name, description, or ID"');
+    expect(body).toContain('<span class="sr-only">Search this page</span>');
+    expect(body).toContain('placeholder="Search this page"');
     expect(body).toContain(
       'data-upload-form data-step="file" data-private-origin="https://private.example.com" data-public-origin="https://public.example.com"',
     );

@@ -1,12 +1,30 @@
 ---
 name: shlook
-description: Publish completed HTML, static sites, and raster images to a self-hosted, private-by-default shlook deployment, then manage sharing and lifecycle.
+description: Install and set up the self-hosted shlook tool, publish completed HTML, static sites, and raster images privately by default, and manage sharing and lifecycle. Use when asked to install, configure, deploy, or publish with shlook.
 ---
 
 # shlook
 
-Use the `shlook` CLI to publish an existing completed artifact. Do not generate, rewrite, or
-infer artifact content in this skill.
+Use this skill to install and configure `shlook`, or use its CLI to publish an existing completed
+artifact. Do not generate, rewrite, or infer artifact content in this skill.
+
+## Installation and Setup
+
+For installation or setup requests, read `references/setup.md` before running CLI commands.
+The skill installer installs these instructions, not the shlook CLI or Cloudflare infrastructure.
+
+1. Check Node.js 24+ and platform requirements, then install the released CLI as documented.
+   Help resolve missing prerequisites rather than assuming the CLI is already available.
+2. Ask for missing Cloudflare account, domain, and owner-email details. Guide the operator through
+   supplying a temporary token with the documented permissions via a secure local environment or
+   secret manager, never by pasting it into chat or printing it in command output.
+3. For a Cloudflare-managed domain, run setup with `--plan`, summarize the proposed changes, and
+   obtain approval before `--apply`. Do not adopt colliding resources without explicit approval.
+   Without a domain, follow the manual deployment checklist instead; automated setup is for
+   custom domains only.
+4. Run `shlook auth check --json` after setup. Report the owner URL and verification result,
+   explain how to publish an existing artifact, and remind the operator to revoke the temporary
+   provisioning token when setup is complete. Do not publish or enable sharing just to finish setup.
 
 ## Default Flow
 

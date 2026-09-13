@@ -18,10 +18,12 @@ export class CliError extends Error {
 
 export class AuthenticatedRedirectError extends Error {
   readonly status: number;
+  readonly location: string | null;
 
-  constructor(status: number) {
+  constructor(status: number, location: string | null = null) {
     super("authenticated request was redirected");
     this.status = status;
+    this.location = location;
   }
 }
 

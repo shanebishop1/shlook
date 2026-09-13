@@ -206,9 +206,9 @@ describe("asset publication", () => {
     });
     await expect(inspected.json()).resolves.toMatchObject({ asset: { state: "live" } });
     expect((await uploadFile(asset.id, winner.path, "overwrite", "text/html")).status).toBe(409);
-    expect(await (await request(`/assets/${asset.id}/`, undefined, privateHost)).text()).toBe(
-      winner === firstFile ? "first" : "second",
-    );
+    expect(
+      await (await request(`/assets/${asset.id}/${winner.path}`, undefined, privateHost)).text(),
+    ).toBe(winner === firstFile ? "first" : "second");
   });
 
   it("backfills names when upgrading a populated database", async () => {

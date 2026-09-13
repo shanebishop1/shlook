@@ -5,6 +5,7 @@ import {
   readManifest,
   uploadKey,
 } from "./artifact";
+import { encodePath } from "./artifact-path";
 import { deleteAsset } from "./cleanup";
 import type { Env } from "./environment";
 import { artifactAccess, deploymentConfig } from "./privacy";
@@ -17,12 +18,24 @@ export async function serveAsset(
   encodedPath: string,
   preview = false,
   cors = false,
+  canonicalPrefix?: string,
+  search = "",
 ): Promise<Response> {
   if (asset.state !== "live") return error("not_found", 404);
 
   if (asset.manifest_id === null) return error("not_found", 404);
   const manifest = await readManifest(env.ASSETS, asset.id, asset.manifest_id);
   if (manifest === null) return error("not_found", 404);
+
+  if (encodedPath === "" && canonicalPrefix !== undefined) {
+    const headers = new Headers({
+      location: `${canonicalPrefix}/${encodePath(manifest.entrypoint)}${search}`,
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+    });
+    if (cors && !preview) headers.set("access-control-allow-origin", "*");
+    return new Response(null, { status: 302, headers });
+  }
 
   const path = encodedPath === "" ? manifest.entrypoint : decodePath(encodedPath);
   const file = manifest.files.find((candidate) => candidate.path === path);
@@ -49,6 +62,8 @@ export async function serveWithPolicy(
   mode: "private" | "public" | "secret",
   secret?: string,
   preview = false,
+  canonicalPrefix?: string,
+  search = "",
 ): Promise<Response> {
   if (asset === null || asset.state !== "live") return error("not_found", 404);
   const access = await artifactAccess(asset, mode, secret);
@@ -57,6 +72,14 @@ export async function serveWithPolicy(
     return error("not_found", 404);
   }
   return access === "allow"
-    ? serveAsset(env, asset, path, preview, mode === "public" || mode === "secret")
+    ? serveAsset(
+        env,
+        asset,
+        path,
+        preview,
+        mode === "public" || mode === "secret",
+        canonicalPrefix,
+        search,
+      )
     : error("not_found", 404);
 }

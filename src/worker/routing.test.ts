@@ -68,6 +68,7 @@ describe("asset publication", () => {
     await expect(archive.json()).resolves.toEqual({ assets: [], nextOffset: null });
     expect((await request("/api/assets?offset=-1")).status).toBe(400);
     expect((await request("/latest", undefined, privateHost)).status).toBe(404);
+    expect((await request(`/assets/${asset.id}`, undefined, privateHost)).status).toBe(404);
     expect((await request(`/assets/${asset.id}/`, undefined, privateHost)).status).toBe(404);
   });
 
@@ -104,7 +105,7 @@ describe("asset publication", () => {
     ]);
   });
 
-  it("serves direct entrypoint and nested files with stored metadata", async () => {
+  it("redirects direct entrypoints to a canonical browser base and serves nested files", async () => {
     const asset = await createAsset();
     const entrypointFile = await uploadedFile(
       await uploadFile(asset.id, "index.html", "<h1>site</h1>", "text/html"),
@@ -114,13 +115,115 @@ describe("asset publication", () => {
     );
     await finalizeAsset(asset.id, [entrypointFile, stylesheetFile], "index.html");
 
-    const entrypoint = await request(`/assets/${asset.id}/`, undefined, privateHost);
+    const entrypoint = await request(
+      `/assets/${asset.id}/?view=browser`,
+      { redirect: "manual" },
+      privateHost,
+    );
     const stylesheet = await request(`/assets/${asset.id}/assets/site.css`, undefined, privateHost);
 
-    expect(await entrypoint.text()).toBe("<h1>site</h1>");
-    expect(entrypoint.headers.get("content-type")).toBe("text/html");
+    expect(entrypoint.status).toBe(302);
+    expect(entrypoint.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${asset.id}/index.html?view=browser`,
+    );
+    const canonical = await request(
+      `/assets/${asset.id}/index.html?view=browser`,
+      undefined,
+      privateHost,
+    );
+    expect(await canonical.text()).toBe("<h1>site</h1>");
+    expect(canonical.headers.get("content-type")).toBe("text/html");
     expect(await stylesheet.text()).toBe("h1{}");
     expect(stylesheet.headers.get("content-type")).toBe("text/css");
+  });
+
+  it("keeps nested entrypoint redirects scoped to each delivery audience", async () => {
+    const asset = await createAsset();
+    const entrypoint = await uploadedFile(
+      await uploadFile(asset.id, "pages/index.html", "<h1>nested</h1>", "text/html"),
+    );
+    await finalizeAsset(asset.id, [entrypoint], "pages/index.html");
+
+    const privateRedirect = await request(
+      `/assets/${asset.id}?from=private`,
+      {
+        redirect: "manual",
+      },
+      privateHost,
+    );
+    expect(privateRedirect.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${asset.id}/pages/index.html?from=private`,
+    );
+    expect(privateRedirect.headers.get("cache-control")).toBe("private, no-store");
+    expect(privateRedirect.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(privateRedirect.headers.get("access-control-allow-origin")).toBeNull();
+
+    await request(`/api/assets/${asset.id}/visibility`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ visibility: "public" }),
+    });
+    const publicRedirect = await request(
+      `/assets/${asset.id}?from=public`,
+      {
+        redirect: "manual",
+      },
+      publicHost,
+      null,
+    );
+    expect(publicRedirect.headers.get("location")).toBe(
+      `https://${publicHost}/assets/${asset.id}/pages/index.html?from=public`,
+    );
+    expect(publicRedirect.headers.get("cache-control")).toBe("private, no-store");
+    expect(publicRedirect.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(publicRedirect.headers.get("access-control-allow-origin")).toBe("*");
+
+    const secretResponse = await request(`/api/assets/${asset.id}/secret?mode=create`, {
+      method: "POST",
+    });
+    const secret = ((await secretResponse.json()) as { secret: string }).secret;
+    const shareRedirect = await request(
+      `/s/${secret}/assets/${asset.id}?from=share`,
+      {
+        redirect: "manual",
+      },
+      shareHost,
+      null,
+    );
+    expect(shareRedirect.headers.get("location")).toBe(
+      `https://${shareHost}/s/${secret}/assets/${asset.id}/pages/index.html?from=share`,
+    );
+    expect(shareRedirect.headers.get("cache-control")).toBe("private, no-store");
+    expect(shareRedirect.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(shareRedirect.headers.get("access-control-allow-origin")).toBe("*");
+
+    const previewRedirect = await request(`/preview/assets/${asset.id}?from=preview`, {
+      redirect: "manual",
+    });
+    expect(previewRedirect.headers.get("location")).toBe(
+      `https://${ownerHost}/preview/assets/${asset.id}/pages/index.html?from=preview`,
+    );
+    expect(previewRedirect.headers.get("cache-control")).toBe("private, no-store");
+    expect(previewRedirect.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(previewRedirect.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("encodes canonical entrypoint segments without changing the query", async () => {
+    const asset = await createAsset();
+    const file = await uploadedFile(
+      await uploadFile(asset.id, "pages/landing%20%231.html", "<h1>encoded</h1>", "text/html"),
+    );
+    await finalizeAsset(asset.id, [file], file.path);
+
+    const response = await request(
+      `/assets/${asset.id}?tab=landing&mode=browser`,
+      { redirect: "manual" },
+      privateHost,
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${asset.id}/pages/landing%20%231.html?tab=landing&mode=browser`,
+    );
   });
 
   it("serves the latest live asset and falls back after deletion", async () => {
@@ -137,9 +240,22 @@ describe("asset publication", () => {
       ),
     ]);
 
-    expect(await (await request("/latest", undefined, privateHost)).text()).toBe("second");
+    const latest = await request("/latest?from=cli", { redirect: "manual" }, privateHost);
+    expect(latest.status).toBe(302);
+    expect(latest.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${second.id}/index.html?from=cli`,
+    );
+    expect(
+      await (
+        await request(`/assets/${second.id}/index.html?from=cli`, undefined, privateHost)
+      ).text(),
+    ).toBe("second");
     expect((await request(`/api/assets/${second.id}`, { method: "DELETE" })).status).toBe(204);
-    expect(await (await request("/latest", undefined, privateHost)).text()).toBe("first");
+    const fallback = await request("/latest/", { redirect: "manual" }, privateHost);
+    expect(fallback.status).toBe(302);
+    expect(fallback.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${first.id}/index.html`,
+    );
   });
 
   it("deletes exactly one asset while preserving its sibling", async () => {
@@ -154,9 +270,8 @@ describe("asset publication", () => {
       (await env.ASSETS.list({ prefix: `assets/${sibling.id}/uploads/` })).objects,
     ).toHaveLength(1);
     expect((await request(`/assets/${deleted.id}/`, undefined, privateHost)).status).toBe(404);
-    expect(await (await request(`/assets/${sibling.id}/`, undefined, privateHost)).text()).toBe(
-      "keep me",
-    );
+    const siblingEntry = await request(`/assets/${sibling.id}/index.html`, undefined, privateHost);
+    expect(await siblingEntry.text()).toBe("keep me");
   });
 });
 
@@ -200,7 +315,12 @@ describe("privacy and lifecycle", () => {
     expect((await request(path, undefined, publicHost, null)).status).toBe(404);
     expect((await request(path, undefined, shareHost, null)).status).toBe(404);
 
-    const response = await request(path);
+    const redirect = await request(path, { redirect: "manual" });
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe(
+      `https://${ownerHost}/preview/assets/${asset.id}/index.html`,
+    );
+    const response = await request(`/preview/assets/${asset.id}/index.html`);
     const policy = response.headers.get("content-security-policy") ?? "";
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("<h1>private preview</h1>");
@@ -235,9 +355,11 @@ describe("privacy and lifecycle", () => {
   it("requires Access for private-host artifacts", async () => {
     const asset = await createLiveAsset("private");
 
-    expect((await request(`/assets/${asset.id}/`, undefined, privateHost, null)).status).toBe(403);
-    expect(await (await request(`/assets/${asset.id}/`, undefined, privateHost)).text()).toBe(
-      "private",
+    expect((await request(`/assets/${asset.id}`, undefined, privateHost, null)).status).toBe(403);
+    const response = await request(`/assets/${asset.id}/`, undefined, privateHost);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      `https://${privateHost}/assets/${asset.id}/index.html`,
     );
   });
 

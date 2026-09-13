@@ -31,7 +31,7 @@ export async function authenticatedFetch(
     redirect: "manual",
   });
   if (response.status >= 300 && response.status < 400) {
-    throw new AuthenticatedRedirectError(response.status);
+    throw new AuthenticatedRedirectError(response.status, response.headers.get("location"));
   }
   return response;
 }

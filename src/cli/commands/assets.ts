@@ -2,6 +2,7 @@ import { AuthenticatedRedirectError, CliError } from "../errors.ts";
 import { api, authenticatedFetch } from "../http.ts";
 import { privateOrigin } from "../origins.ts";
 import type { CliDependencies } from "../types.ts";
+import { decodePath } from "../../worker/artifact-path.ts";
 
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -18,6 +19,50 @@ function expiryValue(value: string | undefined): string | null {
   return value;
 }
 
+function canonicalArtifactRedirect(
+  dependencies: CliDependencies,
+  assetId: string,
+  source: string,
+  location: string | null,
+): string | null {
+  if (location === null) return null;
+  let target: URL;
+  try {
+    target = new URL(location, source);
+  } catch {
+    return null;
+  }
+  const privateOriginValue = new URL(privateOrigin(dependencies));
+  const prefix = `/assets/${assetId}/`;
+  if (
+    target.origin !== privateOriginValue.origin ||
+    target.username !== "" ||
+    target.password !== "" ||
+    target.search !== "" ||
+    target.hash !== "" ||
+    !target.pathname.startsWith(prefix) ||
+    target.pathname === prefix ||
+    decodePath(target.pathname.slice(prefix.length)) === null
+  ) {
+    return null;
+  }
+  return target.href;
+}
+
+async function verifyArtifact(dependencies: CliDependencies, assetId: string): Promise<Response> {
+  const initialUrl = `${privateOrigin(dependencies)}/assets/${assetId}/`;
+  try {
+    return await authenticatedFetch(dependencies, initialUrl, { method: "GET" });
+  } catch (cause) {
+    if (!(cause instanceof AuthenticatedRedirectError)) throw cause;
+    if (cause.status !== 302) throw cause;
+    const target = canonicalArtifactRedirect(dependencies, assetId, initialUrl, cause.location);
+    if (target === null) throw cause;
+    // The follow-up remains manual too: one canonical navigation is allowed, not a chain.
+    return authenticatedFetch(dependencies, target, { method: "GET" });
+  }
+}
+
 export async function verify(
   dependencies: CliDependencies,
   rawId: string | undefined,
@@ -30,11 +75,7 @@ export async function verify(
     throw new CliError("verification_failed", "asset is not live");
   let response: Response;
   try {
-    response = await authenticatedFetch(
-      dependencies,
-      `${privateOrigin(dependencies)}/assets/${assetId}/`,
-      { method: "GET" },
-    );
+    response = await verifyArtifact(dependencies, assetId);
   } catch (cause) {
     if (cause instanceof AuthenticatedRedirectError) {
       throw new CliError(

@@ -17,7 +17,11 @@ database, Worker, and Access service token, `shlook-assets` for R2, and `shlook-
 `shlook-private` for Access applications. The operator owns the account, domain, email, IDs, and
 credentials. Manual deployments may choose their resource names.
 
-Record these values before deploying:
+For automated custom-domain setup, skip to [Headless custom-domain setup](#headless-custom-domain-setup).
+Setup creates the resources and operator configuration for you; no source checkout or manual
+Wrangler configuration is needed.
+
+For manual deployment only, record these values before deploying:
 
 | Value           | Example placeholder                        |
 | --------------- | ------------------------------------------ |

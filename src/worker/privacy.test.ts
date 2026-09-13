@@ -46,7 +46,9 @@ describe("privacy and lifecycle", () => {
       404,
     );
     expect(
-      await (await request(new URL(body.url).pathname, undefined, shareHost, undefined)).text(),
+      await (
+        await request(`${new URL(body.url).pathname}index.html`, undefined, shareHost, undefined)
+      ).text(),
     ).toBe("secret");
     expect(
       (await request(new URL(body.url).pathname, undefined, publicHost, undefined)).status,
@@ -73,7 +75,8 @@ describe("privacy and lifecycle", () => {
       (await request(new URL(first.url).pathname, undefined, shareHost, undefined)).status,
     ).toBe(404);
     expect(
-      (await request(new URL(second.url).pathname, undefined, shareHost, undefined)).status,
+      (await request(`${new URL(second.url).pathname}index.html`, undefined, shareHost, undefined))
+        .status,
     ).toBe(200);
     expect((await request(`/api/assets/${asset.id}/secret`, { method: "DELETE" })).status).toBe(
       204,
@@ -125,9 +128,9 @@ describe("privacy and lifecycle", () => {
     expect((await request(`/assets/${asset.id}/`, undefined, publicHost, undefined)).status).toBe(
       404,
     );
-    expect(await (await request(`/assets/${asset.id}/`, undefined, privateHost)).text()).toBe(
-      "expired share",
-    );
+    expect(
+      await (await request(`/assets/${asset.id}/index.html`, undefined, privateHost)).text(),
+    ).toBe("expired share");
     const row = await env.DB.prepare("SELECT hard_expires_at FROM assets WHERE id = ?")
       .bind(asset.id)
       .first<{ hard_expires_at: string }>();
@@ -145,7 +148,12 @@ describe("privacy and lifecycle", () => {
     });
 
     expect(visibility.status).toBe(200);
-    const shared = await request(`/assets/${asset.id}/`, undefined, publicHost, undefined);
+    const shared = await request(
+      `/assets/${asset.id}/index.html`,
+      undefined,
+      publicHost,
+      undefined,
+    );
     expect(await shared.text()).toBe("<h1>public</h1>");
     expect(shared.headers.get("content-security-policy")).toContain("sandbox");
     expect(shared.headers.get("referrer-policy")).toBe("no-referrer");
@@ -157,7 +165,12 @@ describe("privacy and lifecycle", () => {
       method: "PATCH",
       body: JSON.stringify({ visibility: "public" }),
     });
-    const sharedSvg = await request(`/assets/${svg.id}/`, undefined, publicHost, undefined);
+    const sharedSvg = await request(
+      `/assets/${svg.id}/image.svg`,
+      undefined,
+      publicHost,
+      undefined,
+    );
     expect(sharedSvg.headers.get("content-security-policy")).toContain("sandbox");
     expect((await request(`/assets/${asset.id}/`, undefined, shareHost, undefined)).status).toBe(
       404,
@@ -166,7 +179,11 @@ describe("privacy and lifecycle", () => {
 
   it("grants CORS only to authorized public and secret artifact responses", async () => {
     const privateAsset = await createLiveAsset("private");
-    const privateResponse = await request(`/assets/${privateAsset.id}/`, undefined, privateHost);
+    const privateResponse = await request(
+      `/assets/${privateAsset.id}/index.html`,
+      undefined,
+      privateHost,
+    );
     expect(privateResponse.status).toBe(200);
     expect(privateResponse.headers.get("access-control-allow-origin")).toBeNull();
 
@@ -179,7 +196,12 @@ describe("privacy and lifecycle", () => {
         })
       ).status,
     ).toBe(200);
-    const publicResponse = await request(`/assets/${publicAsset.id}/`, undefined, publicHost, null);
+    const publicResponse = await request(
+      `/assets/${publicAsset.id}/index.html`,
+      undefined,
+      publicHost,
+      null,
+    );
     expect(publicResponse.status).toBe(200);
     expect(publicResponse.headers.get("access-control-allow-origin")).toBe("*");
     expect(publicResponse.headers.get("access-control-allow-credentials")).toBeNull();
@@ -188,7 +210,12 @@ describe("privacy and lifecycle", () => {
     const issued = (await (
       await request(`/api/assets/${secretAsset.id}/secret?mode=create`, { method: "POST" })
     ).json()) as { url: string };
-    const secretResponse = await request(new URL(issued.url).pathname, undefined, shareHost, null);
+    const secretResponse = await request(
+      `${new URL(issued.url).pathname}index.html`,
+      undefined,
+      shareHost,
+      null,
+    );
     expect(secretResponse.status).toBe(200);
     expect(secretResponse.headers.get("access-control-allow-origin")).toBe("*");
     expect(secretResponse.headers.get("access-control-allow-credentials")).toBeNull();

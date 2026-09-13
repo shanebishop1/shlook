@@ -37,18 +37,47 @@ async function route(
 
   if (requestOrigin === config.privateOrigin) {
     const latest = url.pathname.match(/^\/latest(?:\/(.*))?$/);
-    if (request.method === "GET" && latest !== null)
-      return serveWithPolicy(env, await latestAsset(env.DB), latest[1] ?? "", "private");
+    if (request.method === "GET" && latest !== null) {
+      const asset = await latestAsset(env.DB);
+      return serveWithPolicy(
+        env,
+        asset,
+        latest[1] ?? "",
+        "private",
+        undefined,
+        false,
+        asset === null ? undefined : `${config.privateOrigin}/assets/${asset.id}`,
+        url.search,
+      );
+    }
     const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
     if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
-      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "private");
+      return serveWithPolicy(
+        env,
+        await findAsset(env.DB, direct[1]),
+        direct[2] ?? "",
+        "private",
+        undefined,
+        false,
+        `${config.privateOrigin}/assets/${direct[1]}`,
+        url.search,
+      );
     return error("not_found", 404);
   }
 
   if (requestOrigin === config.publicOrigin) {
     const direct = url.pathname.match(/^\/assets\/([^/]+)(?:\/(.*))?$/);
     if (request.method === "GET" && direct !== null && assetIdPattern.test(direct[1]))
-      return serveWithPolicy(env, await findAsset(env.DB, direct[1]), direct[2] ?? "", "public");
+      return serveWithPolicy(
+        env,
+        await findAsset(env.DB, direct[1]),
+        direct[2] ?? "",
+        "public",
+        undefined,
+        false,
+        `${config.publicOrigin}/assets/${direct[1]}`,
+        url.search,
+      );
     return error("not_found", 404);
   }
 
@@ -66,6 +95,9 @@ async function route(
         secret[3] ?? "",
         "secret",
         secret[1],
+        false,
+        `${config.shareOrigin}/s/${secret[1]}/assets/${secret[2]}`,
+        url.search,
       );
     return error("not_found", 404);
   }
@@ -115,6 +147,8 @@ async function route(
       "private",
       undefined,
       true,
+      `${config.ownerOrigin}/preview/assets/${preview[1]}`,
+      url.search,
     );
   }
 
