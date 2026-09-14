@@ -38,6 +38,38 @@ test("connect verifies an injected token before persisting and emits only nonsec
   expect(output).not.toContain(storedCredential.accessClientSecret);
 });
 
+test("connect imports and verifies a complete explicit environment profile", async () => {
+  const persistConnection = vi.fn(async () => "/config/shlook/auth.json");
+  const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+    Response.json({ ok: true, service: "shlook" }),
+  );
+  const env = {
+    CF_ACCESS_CLIENT_ID: "environment-id",
+    CF_ACCESS_CLIENT_SECRET: "environment-secret",
+    SHLOOK_API_ORIGIN: "https://owner.example.com",
+    SHLOOK_PRIVATE_ORIGIN: "https://private.example.net",
+    SHLOOK_PUBLIC_ORIGIN: "https://public.example.org",
+    SHLOOK_SHARE_ORIGIN: "https://share.example.dev",
+  };
+  const context = harness({ env, persistConnection, fetch, readSecretInput: vi.fn() });
+
+  expect(await runCli(["connect", "--from-env", "--json"], context.dependencies)).toBe(0);
+  expect(context.dependencies.readSecretInput).not.toHaveBeenCalled();
+  expect(fetch.mock.calls[0][0]).toBe("https://owner.example.com/health");
+  expect(persistConnection).toHaveBeenCalledWith({
+    domain: "owner.example.com",
+    accessClientId: "environment-id",
+    accessClientSecret: "environment-secret",
+    origins: {
+      owner: "https://owner.example.com",
+      private: "https://private.example.net",
+      public: "https://public.example.org",
+      share: "https://share.example.dev",
+    },
+  });
+  expect(context.stdout.join("")).not.toContain("environment-secret");
+});
+
 test("connect rejects nonexact, empty, oversized, and invalid UTF-8 health bodies without persisting", async () => {
   const token = encodeConnectionCredential(storedCredential);
   const secretBody = "health-body-secret-must-not-leak";
@@ -141,6 +173,25 @@ test("artifact commands automatically load a complete stored connection profile"
   const headers = new Headers(fetch.mock.calls[0][1]?.headers);
   expect(headers.get("CF-Access-Client-Id")).toBe(storedCredential.accessClientId);
   expect(headers.get("CF-Access-Client-Secret")).toBe(storedCredential.accessClientSecret);
+});
+
+test("artifact commands load explicit origins from a stored connection", async () => {
+  const loadConnection = vi.fn(async () => ({
+    ...storedCredential,
+    origins: {
+      owner: "https://owner.example.com",
+      private: "https://private.example.net",
+      public: "https://public.example.org",
+      share: "https://share.example.dev",
+    },
+  }));
+  const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+    Response.json({ ok: true }),
+  );
+  const context = harness({ env: {}, loadConnection, fetch });
+
+  expect(await runCli(["status", "--json"], context.dependencies)).toBe(0);
+  expect(fetch.mock.calls[0][0]).toBe("https://owner.example.com/health");
 });
 
 test("a complete environment profile wins over stored connection credentials", async () => {

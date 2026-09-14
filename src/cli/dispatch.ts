@@ -14,7 +14,9 @@ export async function dispatch(
 ): Promise<CliCommandResult> {
   const [command, ...args] = positionals;
   if (command === undefined) throw new CliError("usage_error", "a command is required");
-  if (command === "connect") return { command, data: await connect(dependencies, args) };
+  if (command === "connect") {
+    return { command, data: await connect(dependencies, args, options.fromEnv) };
+  }
   if (usesConnectionProfile(positionals)) dependencies = await withConnectionProfile(dependencies);
   if (command === "auth" && args[0] === "check")
     return { command, data: await authCheck(dependencies) };

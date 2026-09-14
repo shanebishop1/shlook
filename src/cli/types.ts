@@ -34,6 +34,7 @@ export interface CliOptions {
   ownerEmail?: string;
   accountId?: string;
   showConnectionToken?: boolean;
+  fromEnv?: boolean;
   adoptExisting?: boolean;
   entrypoint?: string;
   name?: string;

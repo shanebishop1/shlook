@@ -7,7 +7,7 @@ import {
 
 import { authenticatedFetch } from "./http.ts";
 import { AuthenticatedRedirectError, CliError } from "./errors.ts";
-import { defaultOrigins } from "./origins.ts";
+import { defaultOrigins, origins } from "./origins.ts";
 import type { ConnectionTokenInput, ConnectionTokenPrompt, CliDependencies } from "./types.ts";
 
 const maximumConnectionTokenBytes = 20_000;
@@ -185,6 +185,7 @@ async function verifyConnectionHealth(response: Response): Promise<void> {
 export async function connect(
   dependencies: CliDependencies,
   args: string[],
+  fromEnvironment = false,
 ): Promise<{ domain: string; path: string; connected: true }> {
   if (args.length !== 0) {
     throw new CliError("usage_error", "connect reads its credential from standard input");
@@ -199,16 +200,34 @@ export async function connect(
   }
 
   let credential: ConnectionCredential;
-  try {
-    const token = await (
-      dependencies.readSecretInput ?? (() => readConnectionToken(process.stdin, process.stderr))
-    )();
-    credential = decodeConnectionCredential(token);
-  } catch {
-    throw new CliError("invalid_connection_credential", "invalid connection credential");
+  if (fromEnvironment) {
+    const accessClientId = dependencies.env.CF_ACCESS_CLIENT_ID;
+    const accessClientSecret = dependencies.env.CF_ACCESS_CLIENT_SECRET;
+    if (accessClientId === undefined || accessClientSecret === undefined) {
+      throw new CliError(
+        "auth_required",
+        "CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required",
+      );
+    }
+    const configured = origins(dependencies);
+    credential = {
+      domain: dependencies.env.SHLOOK_DOMAIN ?? new URL(configured.owner).hostname,
+      accessClientId,
+      accessClientSecret,
+      origins: configured,
+    };
+  } else {
+    try {
+      const token = await (
+        dependencies.readSecretInput ?? (() => readConnectionToken(process.stdin, process.stderr))
+      )();
+      credential = decodeConnectionCredential(token);
+    } catch {
+      throw new CliError("invalid_connection_credential", "invalid connection credential");
+    }
   }
 
-  const owner = defaultOrigins(credential.domain).owner;
+  const owner = credential.origins?.owner ?? defaultOrigins(credential.domain).owner;
   let response: Response;
   try {
     response = await authenticatedFetch(

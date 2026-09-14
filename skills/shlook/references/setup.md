@@ -127,6 +127,8 @@ printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json
 profiles remain compatible and take precedence when any profile variable is set: provide
 `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `SHLOOK_DOMAIN`, or both Access credentials
 and all four explicit origin variables. Partial profiles fail rather than borrowing stored values.
+Persist a complete environment profile for subsequent plain CLI use with
+`shlook connect --from-env --json`; the command verifies owner health before writing `auth.json`.
 
 Rerunning apply reuses manifest-owned resources only when their identity and configuration match
 exactly, then reapplies migrations, redeploys with the persisted encryption key, verifies, and

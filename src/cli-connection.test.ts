@@ -22,6 +22,18 @@ const credential: ConnectionCredential = {
   accessClientSecret: "super-secret-value",
 };
 
+const explicitCredential: ConnectionCredential = {
+  domain: "owner.example.com",
+  accessClientId: "client-id-value",
+  accessClientSecret: "super-secret-value",
+  origins: {
+    owner: "https://owner.example.com",
+    private: "https://private.example.net",
+    public: "https://public.example.org",
+    share: "https://share.example.dev",
+  },
+};
+
 function tokenFor(value: unknown): string {
   return `shlook_connect_v1_${Buffer.from(JSON.stringify(value)).toString("base64url")}`;
 }
@@ -31,6 +43,13 @@ test("encodes one canonical copyable token and decodes it", () => {
 
   expect(token).toMatch(/^shlook_connect_v1_[A-Za-z0-9_-]+$/);
   expect(decodeConnectionCredential(token)).toEqual(credential);
+  expect(encodeConnectionCredential(decodeConnectionCredential(token))).toBe(token);
+});
+
+test("encodes and decodes a connection with explicit origins", () => {
+  const token = encodeConnectionCredential(explicitCredential);
+
+  expect(decodeConnectionCredential(token)).toEqual(explicitCredential);
   expect(encodeConnectionCredential(decodeConnectionCredential(token))).toBe(token);
 });
 
@@ -46,6 +65,15 @@ test("strictly rejects malformed credentials without exposing secrets", () => {
     }),
     tokenFor({ ...credential, domain: "localhost", accessClientSecret: maliciousSecret }),
     tokenFor({ ...credential, extra: "unexpected", accessClientSecret: maliciousSecret }),
+    tokenFor({
+      ...credential,
+      origins: {
+        owner: "https://same.example.com",
+        private: "https://same.example.com",
+        public: "https://public.example.com",
+        share: "https://share.example.com",
+      },
+    }),
     tokenFor(
       JSON.parse(
         `{"domain":"example.com","accessClientId":"id","accessClientSecret":"${maliciousSecret}","__proto__":{"polluted":true}}`,

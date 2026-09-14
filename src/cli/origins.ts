@@ -88,6 +88,14 @@ export async function withConnectionProfile(
       SHLOOK_DOMAIN: credential.domain,
       CF_ACCESS_CLIENT_ID: credential.accessClientId,
       CF_ACCESS_CLIENT_SECRET: credential.accessClientSecret,
+      ...(credential.origins === undefined
+        ? {}
+        : {
+            SHLOOK_API_ORIGIN: credential.origins.owner,
+            SHLOOK_PRIVATE_ORIGIN: credential.origins.private,
+            SHLOOK_PUBLIC_ORIGIN: credential.origins.public,
+            SHLOOK_SHARE_ORIGIN: credential.origins.share,
+          }),
     },
   };
 }

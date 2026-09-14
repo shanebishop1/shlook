@@ -7,7 +7,7 @@ Use `--json` for agent-consumed calls. Success uses
 ```text
 shlook auth check --json
 shlook setup (--plan | --apply) [--domain <domain>] [--owner-email <email>] [--account-id <id>] [--adopt-existing] [--show-connection-token] --json
-shlook connect
+shlook connect [--from-env]
 shlook status --json
 shlook publish <path> --name <short-name> [--description <text>] [--entrypoint <relative-path>] --json
 shlook list [--offset <n>] --json
@@ -35,6 +35,11 @@ run plain `shlook connect` and paste the token at the hidden prompt. For automat
 through standard input, for example
 `printf '%s\n' "$SHLOOK_CONNECTION_TOKEN" | shlook connect --json`. Never supply it as an argv
 value. The command verifies owner health before replacing the stored connection.
+
+For a complete environment profile, including nonstandard explicit origins, run
+`shlook connect --from-env --json`. The command verifies owner health and saves the profile without
+printing credentials. Load dotenv-style files through the runtime when needed, for example
+`node --env-file=.dev.vars ./dist/cli.js connect --from-env --json` from a source checkout.
 
 For normal commands, any of `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `SHLOOK_DOMAIN`,
 or the four explicit origin variables selects the existing environment-profile behavior. A

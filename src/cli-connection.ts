@@ -12,6 +12,7 @@ import {
 
 const tokenPrefix = "shlook_connect_v1_";
 const credentialKeys = ["domain", "accessClientId", "accessClientSecret"] as const;
+const originKeys = ["owner", "private", "public", "share"] as const;
 const domainPattern =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/;
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
@@ -21,6 +22,12 @@ export interface ConnectionCredential {
   domain: string;
   accessClientId: string;
   accessClientSecret: string;
+  origins?: {
+    owner: string;
+    private: string;
+    public: string;
+    share: string;
+  };
 }
 
 export interface ConnectionFileSystem {
@@ -98,13 +105,22 @@ function validateCredential(value: unknown): ConnectionCredential {
     throw invalidCredential();
   }
   const keys = Object.keys(value);
-  if (keys.length !== credentialKeys.length || credentialKeys.some((key) => !keys.includes(key))) {
+  if (
+    (keys.length !== credentialKeys.length && keys.length !== credentialKeys.length + 1) ||
+    credentialKeys.some((key) => !keys.includes(key)) ||
+    (keys.length === credentialKeys.length + 1 && !keys.includes("origins"))
+  ) {
     throw invalidCredential();
   }
 
   const domain = ownDataString(value, "domain");
   const accessClientId = ownDataString(value, "accessClientId");
   const accessClientSecret = ownDataString(value, "accessClientSecret");
+  const originsDescriptor = Object.getOwnPropertyDescriptor(value, "origins");
+  const originsValue =
+    originsDescriptor !== undefined && "value" in originsDescriptor
+      ? originsDescriptor.value
+      : undefined;
   if (
     domain === undefined ||
     !domain.includes(".") ||
@@ -116,7 +132,42 @@ function validateCredential(value: unknown): ConnectionCredential {
   ) {
     throw invalidCredential();
   }
-  return { domain, accessClientId, accessClientSecret };
+  if (originsValue === undefined) return { domain, accessClientId, accessClientSecret };
+  if (typeof originsValue !== "object" || originsValue === null || Array.isArray(originsValue)) {
+    throw invalidCredential();
+  }
+  const originValueKeys = Object.keys(originsValue);
+  if (
+    originValueKeys.length !== originKeys.length ||
+    originKeys.some((key) => !originValueKeys.includes(key))
+  ) {
+    throw invalidCredential();
+  }
+  const origins = Object.fromEntries(
+    originKeys.map((key) => {
+      const value = ownDataString(originsValue, key);
+      if (value === undefined) throw invalidCredential();
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        throw invalidCredential();
+      }
+      if (
+        url.protocol !== "https:" ||
+        url.username !== "" ||
+        url.password !== "" ||
+        url.pathname !== "/" ||
+        url.search !== "" ||
+        url.hash !== ""
+      ) {
+        throw invalidCredential();
+      }
+      return [key, url.origin];
+    }),
+  ) as NonNullable<ConnectionCredential["origins"]>;
+  if (new Set(Object.values(origins)).size !== originKeys.length) throw invalidCredential();
+  return { domain, accessClientId, accessClientSecret, origins };
 }
 
 function validSecretValue(value: string): boolean {
@@ -132,10 +183,12 @@ function validSecretValue(value: string): boolean {
 }
 
 function credentialJson(value: ConnectionCredential): string {
+  const credential = validateCredential(value);
   return JSON.stringify({
-    domain: value.domain,
-    accessClientId: value.accessClientId,
-    accessClientSecret: value.accessClientSecret,
+    domain: credential.domain,
+    accessClientId: credential.accessClientId,
+    accessClientSecret: credential.accessClientSecret,
+    ...(credential.origins === undefined ? {} : { origins: credential.origins }),
   });
 }
 
