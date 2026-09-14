@@ -73,6 +73,12 @@ export function ledgerStyles(): string {
 .pagination a:hover { text-decoration: underline; }
 .pagination[aria-busy="true"] { opacity: .55; pointer-events: none; }
 
+@media (min-width: 901px) and (max-width: 1180px) {
+  th:nth-child(1) { width: 152px; }
+  th:nth-child(4), th:nth-child(5), th:nth-child(6) { width: 128px; }
+  .preview-button { width: 124px; }
+}
+
 @media (max-width: 1080px) {
   th:nth-child(6), .artifact-row td:nth-child(6) { display: none; }
   .inspector { grid-template-columns: 1fr 1fr; }

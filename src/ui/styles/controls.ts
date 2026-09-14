@@ -30,7 +30,7 @@ html[data-theme="dark"] .theme-toggle .sun { display: block; }
   align-items: center; justify-content: space-between; gap: 8px;
   border: 1px solid var(--line-strong); border-radius: 4px;
   background: var(--white); color: var(--ink); font-size: 12px;
-  font-weight: 600; text-align: left;
+  font-weight: 600; text-align: left; white-space: nowrap;
 }
 .custom-trigger:hover, .custom-trigger[aria-expanded="true"] { border-color: var(--accent); background: var(--faint); }
 .custom-trigger svg { width: 16px; flex: none; transition: transform .15s; }
@@ -50,7 +50,7 @@ html[data-theme="dark"] .theme-toggle .sun { display: block; }
 .custom-options button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
 .custom-options button[aria-selected="true"]:after { content: "✓"; float: right; margin-left: 16px; }
 .custom-options button:disabled { color: var(--muted); }
-.visibility-select { width: 122px; }
+.visibility-select { width: 122px; max-width: 100%; }
 .filter-select { width: 145px; }
 .filter-wrap .custom-trigger { height: 38px; }
 .panel .visibility-select { width: 100%; margin-top: 9px; }
@@ -69,20 +69,29 @@ html[data-theme="dark"] .theme-toggle .sun { display: block; }
 .card-status { display: none; }
 
 @media (max-width: 900px) {
-  .artifact-row { grid-template-columns: 128px minmax(0, 1fr) 102px; }
-  .artifact-row td:nth-child(3) { padding-right: 8px; }
-  .visibility-select { width: 94px; }
+  .artifact-row { grid-template-columns: 128px minmax(0, 1fr) 124px; }
+  .artifact-row td:nth-child(2) { grid-row: 1 / 3; padding-right: 12px; }
+  .artifact-row td:nth-child(3) { padding: 6px 12px 12px 0; }
+  .artifact-row td:nth-child(7) { padding: 12px 12px 0 0; align-self: end; }
+  .visibility-select { width: 112px; }
   .visibility-select .custom-trigger { min-height: 32px; font-size: 11px; }
+  .row-action { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row-action .inspect-button { width: 100%; }
+  .row-action [data-inspect] { grid-column: 2; }
   .panel .visibility-select { width: 100%; }
 }
 
 @media (max-width: 520px) {
-  .toolbar { flex-wrap: wrap; }
-  .toolbar .search { flex: 1; min-width: 0; }
-  .toolbar .selection-actions { order: 3; width: 100%; justify-content: flex-end; }
+  .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .toolbar .search { grid-column: 1 / -1; grid-row: 1; width: 100%; min-width: 0; }
+  .toolbar .filter-wrap { grid-column: 1; grid-row: 2; }
+  .toolbar .selection-actions { grid-column: 2; grid-row: 2; justify-content: flex-end; }
   .pagination a { min-height: 44px; display: inline-flex; align-items: center; }
-  .artifact-row { grid-template-columns: 96px minmax(0, 1fr) 96px; }
-  .preview-button { width: 84px; }
+  .artifact-row { grid-template-columns: 80px minmax(0, 1fr) 82px; }
+  .artifact-row td:nth-child(2) { grid-column: 2 / -1; grid-row: 1; }
+  .artifact-row td:nth-child(3) { grid-column: 2; padding: 6px 8px 12px 7px; }
+  .artifact-row td:nth-child(7) { grid-row: 2; padding-top: 6px; padding-bottom: 12px; align-self: start; }
+  .preview-button { width: 64px; height: 64px; }
   .artifact-title { font-size: 13px; }
   .latest, .owner-mark { display: none; }
   .header-actions { gap: 8px; }

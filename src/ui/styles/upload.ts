@@ -57,7 +57,7 @@ export function uploadStyles(): string {
 .upload-result {
   grid-column: 1 / -1; padding: 16px 18px; display: flex; align-items: center;
   justify-content: space-between; gap: 18px; border-top: 1px solid var(--line);
-  background: var(--accent-soft);
+  background: var(--white);
 }
 .upload-result[hidden] { display: none; }
 .upload-result-copy { min-width: 0; }

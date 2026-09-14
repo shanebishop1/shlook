@@ -10,8 +10,8 @@ html[data-theme="dark"] .brand-ribbon { fill: #4c9874; }
 html[data-theme="dark"] .brand-fold { fill: #d6a36f; }
 .artifact-link:hover .artifact-title, .artifact-link:focus-visible .artifact-title { text-decoration: none; }
 .artifact-link:hover .artifact-name, .artifact-link:focus-visible .artifact-name { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-th:nth-child(7) { width: 104px; }
 .row-action { gap: 6px; }
+.row-copy[hidden] { display: none; }
 .row-copy svg { width: 17px; }
 .visibility-select .custom-trigger:disabled { cursor: wait; opacity: 1; }
 .preview-media { position: relative; overflow: hidden; }

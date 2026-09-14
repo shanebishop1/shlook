@@ -204,7 +204,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain("@media (min-width: 901px)");
     expect(body).toContain(".upload-card { padding: 10px; place-items: center; }");
     expect(body).toContain(
-      ".toolbar .selection-actions { order: 3; width: 100%; justify-content: flex-end; }",
+      ".toolbar .selection-actions { grid-column: 2; grid-row: 2; justify-content: flex-end; }",
     );
     expect(body).toContain(".pagination a { min-height: 44px;");
     expect(body).toContain(".large-preview .preview-image { position: absolute; inset: 0; }");

@@ -42,7 +42,7 @@ body.confirm-open { overflow: hidden; }
 
 export function detailPreviewStyles(): string {
   return `
-.selection-actions { display: flex; align-items: center; gap: 8px; order: 2; }
+.selection-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 8px; order: 2; }
 .selection-actions .icon-button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
 .selection-actions [data-select-icon] { display: grid; place-items: center; line-height: 0; }
 .selection-actions [hidden] { display: none !important; }
@@ -69,7 +69,6 @@ body.selection-mode .preview-button, body.selection-mode .artifact-link, body.se
 }
 
 @media (max-width: 900px) {
-  .selection-actions { order: 0; }
   .large-preview { height: 250px; min-height: 250px; }
   .large-preview .preview-media { height: 250px; min-height: 250px; }
   .large-preview .preview-image { position: absolute; inset: 0; }

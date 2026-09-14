@@ -58,10 +58,10 @@ th {
   text-transform: uppercase; border-bottom: 1px solid var(--line);
 }
 th:nth-child(1) { width: 190px; }
-th:nth-child(2) { width: 22%; }
-th:nth-child(3) { width: 125px; }
+th:nth-child(2) { width: auto; }
+th:nth-child(3) { width: 150px; }
 th:nth-child(4), th:nth-child(5), th:nth-child(6) { width: 155px; }
-th:nth-child(7) { width: 66px; }
+th:nth-child(7) { width: 106px; }
 .artifact-row { border-bottom: 1px solid var(--line); transition: background .14s; }
 .artifact-row:hover { background: #fafcfb; }
 .artifact-row.is-open { background: var(--faint); border-bottom-color: transparent; }
@@ -78,6 +78,8 @@ td { height: 112px; padding: 13px 14px; vertical-align: middle; }
 .preview-frame { pointer-events: none; }
 .preview-image[hidden], .preview-frame[hidden] { display: none; }
 .artifact-title { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.artifact-name { min-width: 0; overflow-wrap: anywhere; }
+.latest { flex: none; }
 .latest { padding: 2px 5px; border-radius: 3px; background: #e7f0ed; color: var(--accent); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
 .artifact-id {
   display: block; max-width: 100%; margin-top: 6px; overflow: hidden;
