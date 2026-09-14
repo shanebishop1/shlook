@@ -31,14 +31,15 @@ npx skills add shanebishop1/shlook
 Then paste this prompt into your agent (restart it first if needed to load the new skill):
 
 ```text
-Use the shlook skill to install and set up the shlook tool
-(https://github.com/shanebishop1/shlook) for me. Follow the skill's setup
-reference, check prerequisites, and handle the CLI installation and deployment.
-Ask me for any missing Cloudflare account, domain, or owner-email details,
+Use the `shlook` skill to help me install and set up the `shlook` CLI/deployment
+(https://github.com/shanebishop1/shlook). Follow the skill's setup/references,
+check prerequisites, and handle the CLI installation and deployment.
+Ask me if you are missing any credentials, domain, or owner-email details,
 and guide me through securely providing a temporary provisioning token without
-pasting secrets into chat. Show me the deployment plan and get my approval
-before applying it. Verify the connection when finished, keep publications
-private by default, and tell me how to publish my first artifact.
+pasting secrets into chat. Never directly read any sensitive credentials.
+Show me the deployment plan and get my approval before applying it.
+Verify the connection when finished, keep publications private by default,
+and tell me how to publish my first artifact.
 ```
 
 For direct CLI setup and credential details, see the
