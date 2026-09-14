@@ -3,18 +3,22 @@
 [![npm version](https://img.shields.io/npm/v/shlook.svg)](https://www.npmjs.com/package/shlook)
 [![CI](https://github.com/shanebishop1/shlook/actions/workflows/ci.yml/badge.svg)](https://github.com/shanebishop1/shlook/actions/workflows/ci.yml)
 
-`shlook` is a self-hosted Cloudflare publication pipeline for agent-created HTML, static sites,
-and raster images. The CLI and owner UI send artifacts to an owner-authenticated API;
-publications remain private until an operator explicitly enables public or secret-link sharing.
+`shlook` lets you and your coding agent share HTML pages, static sites, and images through a
+private-by-default library hosted in your Cloudflare account.
+
+- **Working over SSH:** have your agent publish a page or image and open its link, without copying
+  files back or exposing a development server for each preview.
+- **Reviewing on your phone:** open the artifact, then upload a screenshot through the mobile web
+  app for your agent to retrieve and inspect. The same library works in both directions.
+
+Use the web app on any device with a modern browser. Any coding agent that can run CLI commands
+can use shlook; the included skill documents the workflow, without tying it to one agent app.
+
+Set it up once using the included agent skill and deployment recipe. With a Cloudflare account
+and a Cloudflare-managed domain, the agent provisions storage and access controls after your
+approval; you do not need to configure R2 yourself.
 
 ![shlook demo](docs/assets/shlook_demo.gif)
-
-### Key capabilities
-
-- Browser-free CLI setup, connection, publication, and lifecycle workflows.
-- An owner archive and API backed by D1 metadata/lifecycle state and private R2 bytes.
-- Separate private, public, and capability-link delivery surfaces for untrusted artifacts.
-- Plan/apply provisioning with operator-owned Wrangler configuration and short-lived credentials.
 
 ## Quick start
 
@@ -45,6 +49,17 @@ the agent handles the commands. The temporary provisioning token is never persis
 
 For direct CLI setup and credential details, see the
 [setup reference](skills/shlook/references/setup.md).
+
+## When to use shlook
+
+Shlook fits quick, saved artifacts and feedback shared between an agent and your devices.
+Other tools may be a better fit for transport, live development, or general file hosting:
+
+| Need                                | Alternative                                                                                        | Difference                                                                                                                        |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Copy files between machines         | SCP or [croc](https://github.com/schollz/croc)                                                     | Transfers files; shlook keeps a browsable library with viewing links.                                                             |
+| Reach a running development server  | [Tailscale Serve](https://tailscale.com/kb/1312/serve)                                             | Provides access to a live service; shlook hosts published files, not a running backend.                                           |
+| General screenshot and file hosting | [Zipline](https://github.com/diced/zipline) or [Chibisafe](https://github.com/chibisafe/chibisafe) | Broader upload tools; shlook focuses on private-by-default HTML/image exchange with an agent skill and Cloudflare setup workflow. |
 
 ## Security model
 
