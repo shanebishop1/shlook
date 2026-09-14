@@ -46,9 +46,6 @@ For direct CLI setup and credential details, see the
 
 ## Alternatives
 
-Once shlook is configured, an agent in a VM or cloud machine can publish over HTTPS without
-connecting to your device. You open the result in a browser, including on your phone.
-
 - **SCP or [croc](https://github.com/schollz/croc):** useful for file transfer. SCP needs an
   SSH-accessible destination; croc needs a receiving client. Shlook gives you a saved viewing link
   instead of requiring a transfer to each device.
