@@ -7,6 +7,8 @@
 and raster images. The CLI and owner UI send artifacts to an owner-authenticated API;
 publications remain private until an operator explicitly enables public or secret-link sharing.
 
+![shlook demo](docs/assets/shlook_demo.gif)
+
 ### Key capabilities
 
 - Browser-free CLI setup, connection, publication, and lifecycle workflows.
