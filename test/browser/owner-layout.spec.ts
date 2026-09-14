@@ -83,6 +83,7 @@ for (const theme of ["light", "dark"] as const) {
         expect(select.x + select.width).toBeLessThanOrEqual(cell.x + cell.width - 7);
         expect(label.height).toBeLessThan(18);
         expect(label.x + label.width).toBeLessThanOrEqual(arrow.x - 7);
+        if (width > 900) expect(select.width).toBe(108);
         const copy = row.locator("[data-copy-row]");
         const inspect = row.locator(".row-action [data-inspect]");
         const inspectBox = await box(inspect);

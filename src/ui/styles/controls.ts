@@ -50,7 +50,7 @@ html[data-theme="dark"] .theme-toggle .sun { display: block; }
 .custom-options button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
 .custom-options button[aria-selected="true"]:after { content: "✓"; float: right; margin-left: 16px; }
 .custom-options button:disabled { color: var(--muted); }
-.visibility-select { width: 122px; max-width: 100%; }
+.visibility-select { width: 108px; max-width: 100%; }
 .filter-select { width: 145px; }
 .filter-wrap .custom-trigger { height: 38px; }
 .panel .visibility-select { width: 100%; margin-top: 9px; }

@@ -59,7 +59,7 @@ th {
 }
 th:nth-child(1) { width: 190px; }
 th:nth-child(2) { width: auto; }
-th:nth-child(3) { width: 150px; }
+th:nth-child(3) { width: 136px; }
 th:nth-child(4), th:nth-child(5), th:nth-child(6) { width: 155px; }
 th:nth-child(7) { width: 106px; }
 .artifact-row { border-bottom: 1px solid var(--line); transition: background .14s; }
