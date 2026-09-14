@@ -1,12 +1,12 @@
 ---
 name: shlook
-description: Install and set up the self-hosted shlook tool, publish completed HTML, static sites, and raster images privately by default, and manage sharing and lifecycle. Use when asked to install, configure, deploy, or publish with shlook.
+description: Install and set up shlook; publish, browse, retrieve, and inspect private artifacts; and manage sharing and lifecycle. Use when asked to work with artifacts stored in shlook.
 ---
 
 # shlook
 
-Use this skill to install and configure `shlook`, or use its CLI to publish an existing completed
-artifact. Do not generate, rewrite, or infer artifact content in this skill.
+Use this skill to install and configure `shlook`, publish an existing completed artifact, or access
+artifacts in its private library. Do not generate, rewrite, or infer artifact content in this skill.
 
 ## Installation and Setup
 
@@ -45,6 +45,18 @@ The skill installer installs these instructions, not the shlook CLI or Cloudflar
    `references/verification.md`; do not make an artifact public to work around private delivery
    limits.
 6. Change visibility, create a secret link, or set expiry only when explicitly requested.
+
+## Retrieve Artifacts
+
+1. Run `shlook auth check --json`, then `shlook list --json` to find the asset. Use
+   `shlook show <asset-id> --json` when its metadata is needed.
+2. Fetch `${SHLOOK_PRIVATE_ORIGIN}/assets/<asset-id>/` with the configured Cloudflare Access
+   service-token credentials and save the response locally. Accept only the canonical `302` to a
+   file under the same private origin and asset ID, then fetch that file with the same credentials.
+3. Inspect the saved artifact with the appropriate local tool. For relative files referenced by an
+   HTML entrypoint, fetch them from the same asset path with the same credentials.
+4. Never print credentials, use an unauthenticated fetcher for a private URL, or change visibility
+   merely to retrieve an artifact.
 
 Owner archive previews are live HTML in opaque sandboxed iframes, not browser-rendered screenshots
 or malware scanning. Inline scripts/styles and classic same-publication assets are supported;

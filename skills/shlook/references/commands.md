@@ -41,6 +41,11 @@ For a complete environment profile, including nonstandard explicit origins, run
 printing credentials. Load dotenv-style files through the runtime when needed, for example
 `node --env-file=.dev.vars ./dist/cli.js connect --from-env --json` from a source checkout.
 
+`list` discovers library assets and `show` returns one asset's metadata. They do not return artifact
+bytes. Retrieve content with an authenticated `GET` to the private URL
+`${SHLOOK_PRIVATE_ORIGIN}/assets/<asset-id>/`; follow only its canonical same-origin entrypoint
+redirect, retain Access credentials on that one redirect, and save the response locally.
+
 For normal commands, any of `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `SHLOOK_DOMAIN`,
 or the four explicit origin variables selects the existing environment-profile behavior. A
 partial environment profile is rejected rather than completed from stored credentials. If none

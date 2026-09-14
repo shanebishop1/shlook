@@ -20,6 +20,9 @@ unauthenticated public and share `/` requests are `404 {"error":"not_found"}`. T
 not verify an artifact's upload, visibility, capability, expiry, or deletion lifecycle; perform
 those checks manually below.
 
+The same authenticated private `GET` may be used to retrieve an artifact for local inspection.
+Do not use public visibility or a secret link as a download workaround.
+
 Use `shlook show <asset-id> --json` to confirm that `name` and optional `description` match the
 values supplied at publication.
 
