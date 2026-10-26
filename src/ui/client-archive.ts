@@ -1,3 +1,5 @@
+import { archiveRefreshScript } from "./archive-refresh.ts";
+
 export function archiveClientScript(): string {
   return `
 const closeConfirmation = (confirmation) => {
@@ -91,10 +93,12 @@ const localDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'num
 const localTime = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
 const initializeArchiveRows = (root = document) => {
   root.querySelectorAll('input[data-iso]').forEach((input) => {
-    if (!input.dataset.iso) return;
-    const date = new Date(input.dataset.iso);
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    input.value = local.toISOString().slice(0, 16);
+    if (input.dataset.iso) {
+      const date = new Date(input.dataset.iso);
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      input.value = local.toISOString().slice(0, 16);
+    }
+    input.dataset.initialValue = input.value;
   });
   root.querySelectorAll('[data-local-time]').forEach((element) => {
     const date = new Date(element.dateTime);
@@ -159,33 +163,58 @@ const resumeArchivePreviews = () => {
     mobilePreviewObserver.observe(frame.parentElement);
   });
 };
-const refreshArchive = async (path = '/', historyMode = 'replace') => {
+const refreshArchive = async (path = '/', historyMode = 'replace', options = {}) => {
   const url = new URL(path, location.origin);
   if (url.origin !== location.origin) throw new Error('Archive navigation was blocked.');
   const archivePath = url.pathname + url.search;
-  const previewsSuspended = suspendArchivePreviews();
+  const passive = options.passive === true;
+  const fresh = () => !controller.signal.aborted && (!options.fresh || options.fresh()) && (!passive || location.pathname + location.search === archivePath);
+  const previewsSuspended = !passive && suspendArchivePreviews();
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) abort();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
+    if (!fresh()) return;
     const response = await fetch(archivePath, { credentials: 'same-origin', signal: controller.signal });
+    if (!fresh()) return;
     if (response.status === 401) {
       location.assign(archivePath);
       throw new Error('Your session expired. Sign in again.');
     }
     if (!response.ok) throw new Error('Archive refresh failed.');
-    const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const html = await response.text();
+    if (!fresh()) return;
+    const nextDocument = new DOMParser().parseFromString(html, 'text/html');
     const nextBody = nextDocument.querySelector('.ledger tbody');
     const nextCount = nextDocument.querySelector('[data-count]');
     const nextPagination = nextDocument.querySelector('.pagination');
     if (!nextBody || !nextCount || !nextPagination) throw new Error('Archive refresh failed.');
+    const selected = new Set(selectedItems().map((item) => item.closest('[data-record]').dataset.record));
+    const focused = document.activeElement;
+    const focusedRow = focused?.closest('[data-record]');
+    const focusedIndex = focusedRow ? [...focusedRow.querySelectorAll('a,button,input')].indexOf(focused) : -1;
+    if (!fresh()) return;
     document.querySelector('.ledger tbody').replaceWith(nextBody);
     count.textContent = nextCount.textContent;
     pagination.innerHTML = nextPagination.innerHTML;
     records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
     initializeArchiveRows(nextBody);
-    document.querySelector('input[data-search]').value = '';
-    if (filterMenu) setMenuValue(filterMenu, 'all');
+    if (passive) {
+      nextBody.querySelectorAll('[data-select-item]').forEach((item) => {
+        item.checked = selected.has(item.closest('[data-record]').dataset.record);
+      });
+      syncSelection();
+    } else {
+      document.querySelector('input[data-search]').value = '';
+      if (filterMenu) setMenuValue(filterMenu, 'all');
+    }
     filterRecords();
+    if (passive && focusedRow && focusedIndex >= 0) {
+      const replacement = records.find((row) => row.dataset.record === focusedRow.dataset.record);
+      if (replacement && !replacement.hidden) replacement.querySelectorAll('a,button,input')[focusedIndex]?.focus({ preventScroll: true });
+    }
     if (historyMode === 'push') history.pushState(null, '', archivePath);
     else if (historyMode === 'replace') history.replaceState(null, '', archivePath);
   } catch (error) {
@@ -193,12 +222,14 @@ const refreshArchive = async (path = '/', historyMode = 'replace') => {
     throw error;
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abort);
   }
 };
 let archiveLoading = false;
 const navigateArchive = async (path, historyMode) => {
   if (archiveLoading) return;
   archiveLoading = true;
+  const finishOperation = beginArchiveOperation();
   pagination.setAttribute('aria-busy', 'true');
   setStatus(null, 'Loading archive...');
   try {
@@ -209,6 +240,7 @@ const navigateArchive = async (path, historyMode) => {
   } finally {
     archiveLoading = false;
     pagination.removeAttribute('aria-busy');
+    finishOperation();
   }
 };
 const shareUrlFor = (card, value) => value === 'public' ? card.dataset.publicUrl : value === 'secret_link' ? card.dataset.secretUrl : '';
@@ -261,5 +293,50 @@ const setTheme = (theme) => {
 let initialTheme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 try { initialTheme = localStorage.getItem('shlook-theme') || initialTheme; } catch {}
 setTheme(initialTheme);
-document.querySelector('[data-theme-toggle]').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));`;
+document.querySelector('[data-theme-toggle]').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+let archiveOperations = 0;
+let archivePageHidden = false;
+const archiveInteractionSafe = () => archiveOperations === 0 && !uploadBusy &&
+  !document.querySelector('[data-record].is-open,[data-detail]:not([hidden]),[data-menu-list]:not([hidden]),[data-confirm]:not([hidden]),[data-action-confirm]:not([hidden]),[data-upload-dialog]:not([hidden])') &&
+  ![...document.querySelectorAll('[data-share-expiry],[data-hard-expiry]')].some((input) => input.value !== input.dataset.initialValue);
+const archiveRefresh = (${archiveRefreshScript()})({
+  active: () => document.visibilityState === 'visible' && document.hasFocus() && !archivePageHidden,
+  safe: archiveInteractionSafe,
+  request: (signal, fresh) => refreshArchive(location.pathname + location.search, 'none', { passive: true, signal, fresh }),
+  setTimeout: (callback, delay) => setTimeout(callback, delay),
+  clearTimeout: (timer) => clearTimeout(timer),
+});
+const beginArchiveOperation = () => {
+  archiveOperations++;
+  archiveRefresh.interaction();
+  let finished = false;
+  return () => {
+    if (finished) return;
+    finished = true;
+    archiveOperations--;
+    archiveRefresh.notify();
+  };
+};
+addEventListener('focus', () => archiveRefresh.notify());
+addEventListener('blur', () => archiveRefresh.notify());
+document.addEventListener('visibilitychange', () => archiveRefresh.notify());
+addEventListener('pagehide', () => { archivePageHidden = true; archiveRefresh.notify(); });
+addEventListener('pageshow', (event) => { archivePageHidden = false; if (event.persisted) archiveRefresh.notify(true); });
+// Capture the beginning, not just the final DOM state: an open/close or edit/revert
+// during a request must still invalidate its response.
+['pointerdown', 'click', 'keydown', 'input', 'change', 'submit', 'drop'].forEach((type) => document.addEventListener(type, () => {
+  archiveRefresh.interaction();
+  queueMicrotask(() => archiveRefresh.notify());
+}, true));
+new MutationObserver((changes) => {
+  const hiddenChanges = changes.filter((change) => change.attributeName === 'hidden' && change.target.matches('[data-detail],[data-menu-list],[data-confirm],[data-action-confirm],[data-upload-dialog]'));
+  const changed = hiddenChanges.some((change) =>
+    (change.oldValue === null) !== !change.target.hidden ||
+    hiddenChanges.some((other) => other.target === change.target && other.oldValue !== change.oldValue));
+  const openedRow = changes.some((change) => change.attributeName === 'class' && change.target.matches('[data-record]') && !(change.oldValue || '').split(/\\s+/).includes('is-open') && change.target.classList.contains('is-open'));
+  if (changed || openedRow) {
+    archiveRefresh.interaction();
+    archiveRefresh.notify();
+  }
+}).observe(document.body, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['hidden', 'class'] });`;
 }
