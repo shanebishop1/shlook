@@ -159,7 +159,7 @@ test("login clears the token before exchange and resumes the server-provided URL
   assert.ok(!message.textContent.includes("private-test-token"));
 });
 
-test("login contains only token and submit, escapes the server-sanitized return value", async (t) => {
+test("login labels the token visibly without extra copy and escapes its return value", async (t) => {
   const { origin } = await fixture(t);
   const safe = "/archive?offset=100&x=%22quoted%22";
   const response = await fetch(origin + "/login?return=" + encodeURIComponent(safe));
@@ -167,11 +167,15 @@ test("login contains only token and submit, escapes the server-sanitized return 
   const document = new JSDOM(html).window.document;
   assert.equal(document.querySelectorAll('input:not([type="hidden"]),button').length, 2);
   assert.equal(document.querySelector("#token")?.getAttribute("type"), "password");
-  assert.equal(document.querySelector("#token")?.getAttribute("aria-label"), "API token");
-  assert.equal(document.querySelector("h1,h2,header,footer,label"), null);
+  const input = document.querySelector<HTMLInputElement>("#token")!;
+  const label = document.querySelector<HTMLLabelElement>('label[for="token"]')!;
+  assert.equal(label.textContent, "API token");
+  assert.equal(label.control, input);
+  assert.equal(input.labels?.[0], label);
+  assert.equal(document.querySelector("h1,h2,header,footer"), null);
   assert.equal(document.querySelector('[name="return"]')?.getAttribute("value"), safe);
   assert.equal(document.querySelector("#message")?.hasAttribute("hidden"), true);
-  assert.equal(document.body.textContent?.split("const form")[0]?.trim(), "Sign in");
+  assert.equal(document.body.textContent?.split("const form")[0]?.trim(), "API token Sign in");
   const bad = new JSDOM(
     await (await fetch(origin + "/login?return=" + encodeURIComponent("//evil.example"))).text(),
   ).window.document;

@@ -177,7 +177,10 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     await expect(page).toHaveURL(/\/login\?/);
     await expect(page.locator('input[type="password"]')).toHaveCount(1);
     await expect(page.getByRole("heading")).toHaveCount(0);
-    await expect(page.locator("body")).toHaveText("Sign in");
+    await expect(page.locator("body")).toHaveText("API token Sign in");
+    await expect(page.locator('label[for="token"]')).toBeVisible();
+    await page.locator('label[for="token"]').click();
+    await expect(page.getByLabel("API token", { exact: true })).toBeFocused();
     await expect(page.locator("#token")).toHaveAccessibleName("API token");
     await page.screenshot({ path: testInfo.outputPath("native-login.png") });
     await page.locator("#token").fill(publisher.secret);
@@ -376,7 +379,8 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         new URL(deepLink).pathname + new URL(deepLink).search,
       );
       await expect(freshPage.getByRole("heading")).toHaveCount(0);
-      await expect(freshPage.locator("body")).toHaveText("Sign in");
+      await expect(freshPage.locator("body")).toHaveText("API token Sign in");
+      await expect(freshPage.locator('label[for="token"]')).toBeVisible();
       await freshPage.locator("#token").fill(publisher.secret);
       await freshPage.getByRole("button", { name: "Sign in", exact: true }).click();
       await expect(freshPage).toHaveURL(deepLink);
