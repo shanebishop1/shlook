@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { addUser, disableUser, issueToken, listUsers } from "./admin.ts";
 import { initConfig, loadConfig, type NativeConfig } from "./config.ts";
 import { createNativeApplication } from "./router.ts";
@@ -263,7 +262,7 @@ export async function run(args: string[]): Promise<void> {
 
 import { NativeAssetService } from "./api.ts";
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   run(process.argv.slice(2)).catch(() => {
     process.stderr.write(
       "shlook-server: command failed; check arguments and initialized data directory\n",

@@ -1,14 +1,35 @@
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { initConfig } from "../../src/native/config.ts";
 import { run } from "../../src/native/main.ts";
 import { createNativeApplication } from "../../src/native/router.ts";
 import { listenLoopback } from "../../src/native/server.ts";
 import { NativeStore } from "../../src/native/store.ts";
+
+test("server executable runs through an installed-bin symlink", () => {
+  const parent = mkdtempSync(join(tmpdir(), "shlook-server-bin-"));
+  try {
+    const bin = join(parent, "shlook-server");
+    const dataDir = join(parent, "instance");
+    symlinkSync(fileURLToPath(new URL("../../src/native/main.ts", import.meta.url)), bin);
+    const result = spawnSync(
+      process.execPath,
+      [bin, "init", "--data-dir", dataDir, "--origin", "https://shlook.example"],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).ok, true);
+    assert.equal(JSON.parse(readFileSync(join(dataDir, "server.json"), "utf8")).version, 1);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
 
 test("server admin entrypoint initializes, manages users/tokens, and requires secure token output", async () => {
   const parent = mkdtempSync(join(tmpdir(), "shlook-server-admin-"));
