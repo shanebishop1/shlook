@@ -3,7 +3,7 @@ import { NativeApiError, NativeAssetService, decodeAssetPath } from "./api.ts";
 import { deliverArtifact, entrypointLocation } from "./delivery.ts";
 import {
   createNativeServer,
-  type BoundaryResult,
+  type AuthorizedBoundary,
   type Identity,
   type NativeServerOptions,
   revalidateAuthorizedRequest,
@@ -62,6 +62,20 @@ function requireViewer(identity: Identity) {
 function requirePublisher(identity: Identity) {
   if (identity.role !== "publisher") throw new NativeApiError(403, "forbidden");
 }
+function freshAuthorizationGuard(
+  request: IncomingMessage,
+  store: NativeStore,
+  config: NativeConfig,
+  auth: AuthorizedBoundary,
+) {
+  return () => {
+    if (
+      (auth.kind !== "cookie" && auth.kind !== "bearer") ||
+      !revalidateAuthorizedRequest(request, store, config, auth)
+    )
+      throw new NativeApiError(401, "unauthorized");
+  };
+}
 function queryOffset(url: URL) {
   const value = url.searchParams.get("offset") ?? "0";
   if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new NativeApiError(400, "invalid_offset");
@@ -94,7 +108,7 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
   const handler = async (
     request: IncomingMessage,
     response: ServerResponse,
-    auth: BoundaryResult & { identity: Identity },
+    auth: AuthorizedBoundary,
   ) => {
     const url = parts(request.url);
     if (!url) {
@@ -105,6 +119,12 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       method = request.method ?? "GET",
       identity = auth.identity;
     try {
+      const assertFreshAuthorization = freshAuthorizationGuard(
+        request,
+        options.store,
+        options.config,
+        auth,
+      );
       if (
         (method === "GET" || method === "HEAD") &&
         (path === "/" || path === "/archive" || path.startsWith("/ui/"))
@@ -141,15 +161,7 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       if (path === "/api/assets" && method === "POST") {
         requirePublisher(identity);
         const input = await bodyJson(request);
-        if (
-          !revalidateAuthorizedRequest(
-            request,
-            options.store,
-            options.config,
-            auth as { identity: Identity; kind: "cookie" | "bearer" },
-          )
-        )
-          throw new NativeApiError(401, "unauthorized");
+        assertFreshAuthorization();
         apiResponse(response, 201, { asset: assets.create(input, identity) });
         return;
       }
@@ -166,11 +178,18 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
           requirePublisher(identity);
           const encoded = rest.slice("files/".length);
           const filePath = decodeAssetPath(encoded);
+          const revalidateUpload = freshAuthorizationGuard(
+            request,
+            options.store,
+            options.config,
+            auth,
+          );
           const file = await assets.upload(
             id,
             filePath,
             request,
             request.headers["content-length"],
+            revalidateUpload,
           );
           apiResponse(response, 201, { file });
           return;
@@ -178,20 +197,13 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
         if (method === "POST" && rest === "finalize") {
           requirePublisher(identity);
           const input = await bodyJson(request);
-          if (
-            !revalidateAuthorizedRequest(
-              request,
-              options.store,
-              options.config,
-              auth as { identity: Identity; kind: "cookie" | "bearer" },
-            )
-          )
-            throw new NativeApiError(401, "unauthorized");
+          assertFreshAuthorization();
           apiResponse(response, 200, { asset: assets.finalize(id, input) });
           return;
         }
         if (method === "DELETE" && !rest) {
           requirePublisher(identity);
+          assertFreshAuthorization();
           assets.delete(id);
           response.statusCode = 204;
           response.end();
@@ -200,21 +212,15 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
         if (method === "PATCH" && rest === "expiry") {
           requirePublisher(identity);
           const input = await bodyJson(request);
-          if (
-            !revalidateAuthorizedRequest(
-              request,
-              options.store,
-              options.config,
-              auth as { identity: Identity; kind: "cookie" | "bearer" },
-            )
-          )
-            throw new NativeApiError(401, "unauthorized");
+          assertFreshAuthorization();
           apiResponse(response, 200, { asset: assets.setExpiry(id, input) });
           return;
         }
         if (method === "PATCH" && rest === "visibility") {
           requirePublisher(identity);
-          apiResponse(response, 200, { asset: assets.setVisibility(id, await bodyJson(request)) });
+          const input = await bodyJson(request);
+          assertFreshAuthorization();
+          apiResponse(response, 200, { asset: assets.setVisibility(id, input) });
           return;
         }
         if (/^(?:secret|share)(?:\/|$)/.test(rest))

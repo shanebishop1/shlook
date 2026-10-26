@@ -238,8 +238,10 @@ export class NativeAssetService {
     id: string,
     path: string,
     request: AsyncIterable<Uint8Array>,
-    contentLength?: string,
+    contentLength: string | undefined,
+    assertAuthorized: () => void,
   ): Promise<{ path: string; uploadId: string }> {
+    assertAuthorized();
     canonicalAssetPath(path);
     if (
       contentLength !== undefined &&
@@ -333,6 +335,7 @@ export class NativeAssetService {
         this.store.db
           .prepare("UPDATE assets SET updated_at=? WHERE id=? AND state='uploading'")
           .run(this.now(), id);
+        assertAuthorized();
         this.store.db.exec("COMMIT");
       } catch (error) {
         this.rollback();

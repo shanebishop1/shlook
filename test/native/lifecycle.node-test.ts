@@ -62,7 +62,7 @@ async function awaitUpload(
   path: string,
   data: Uint8Array,
 ) {
-  return service.upload(id, path, source(data), String(data.byteLength));
+  return service.upload(id, path, source(data), String(data.byteLength), () => {});
 }
 function readdirObjects(path: string) {
   return readdirSync(path).length;
@@ -86,7 +86,7 @@ test("upload reservation prevents finalize races and concurrent delete cannot pu
       await blocked;
       yield Buffer.from("<html></html>");
     }
-    const upload = service.upload(asset.id, "index.html", slow(), "13");
+    const upload = service.upload(asset.id, "index.html", slow(), "13", () => {});
     await isStarted;
     assert.throws(
       () => service.finalize(asset.id, { entrypoint: "index.html", files: [] }),
@@ -164,14 +164,20 @@ test("file count and streamed file byte limit are enforced without permanent res
     const actor = { ...identity, tokenId: token.id };
     const asset = service.create({ name: "Count" }, actor);
     for (let i = 0; i < 500; i++)
-      await service.upload(asset.id, `f${i}.txt`, source(Buffer.alloc(0)), "0");
+      await service.upload(asset.id, `f${i}.txt`, source(Buffer.alloc(0)), "0", () => {});
     await assert.rejects(
-      service.upload(asset.id, "extra.txt", source(Buffer.alloc(0)), "0"),
+      service.upload(asset.id, "extra.txt", source(Buffer.alloc(0)), "0", () => {}),
       (error) => error instanceof NativeApiError && error.status === 413,
     );
     const tooLarge = service.create({ name: "Too big" }, actor);
     await assert.rejects(
-      service.upload(tooLarge.id, "x.bin", source(Buffer.alloc(25 * 1024 * 1024 + 1))),
+      service.upload(
+        tooLarge.id,
+        "x.bin",
+        source(Buffer.alloc(25 * 1024 * 1024 + 1)),
+        undefined,
+        () => {},
+      ),
       (error) => error instanceof NativeApiError && error.status === 413,
     );
     assert.equal(
@@ -182,7 +188,7 @@ test("file count and streamed file byte limit are enforced without permanent res
     );
     const lying = service.create({ name: "Lying length" }, actor);
     await assert.rejects(
-      service.upload(lying.id, "one.txt", source(Buffer.from("longer")), "1"),
+      service.upload(lying.id, "one.txt", source(Buffer.from("longer")), "1", () => {}),
       (error) => error instanceof NativeApiError && error.status === 400,
     );
     assert.equal(
@@ -192,7 +198,15 @@ test("file count and streamed file byte limit are enforced without permanent res
     );
     const missingLength = service.create({ name: "No length" }, actor);
     assert.equal(
-      (await service.upload(missingLength.id, "one.txt", source(Buffer.from("ok")))).path,
+      (
+        await service.upload(
+          missingLength.id,
+          "one.txt",
+          source(Buffer.from("ok")),
+          undefined,
+          () => {},
+        )
+      ).path,
       "one.txt",
     );
 
@@ -211,7 +225,7 @@ test("file count and streamed file byte limit are enforced without permanent res
         Date.now(),
       );
     await assert.rejects(
-      service.upload(full.id, "last.dat", source(Buffer.alloc(0)), "1"),
+      service.upload(full.id, "last.dat", source(Buffer.alloc(0)), "1", () => {}),
       (error) => error instanceof NativeApiError && error.status === 413,
     );
   } finally {

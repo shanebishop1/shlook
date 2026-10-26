@@ -198,6 +198,7 @@ test("nested CLI-style encoded paths publish and serve compiled nested HTML/CSS/
         yield Buffer.from("stale");
       })(),
       "5",
+      () => {},
     );
     const staleKey = (
       store.db

@@ -74,6 +74,7 @@ export type BoundaryResult =
   | { identity: Identity; kind: "bearer" | "cookie"; csrfToken?: string; expiresAt?: number }
   | { status: number; retryAfter?: number }
   | { kind: "public" | "login" };
+export type AuthorizedBoundary = Extract<BoundaryResult, { identity: Identity }>;
 type MatchedOrigin = { origin: string; secure: boolean };
 function matchingOrigin(host: string | undefined, config: NativeConfig): MatchedOrigin | null {
   if (!host || /[\s,/@\\?#]/.test(host)) return null;
@@ -260,7 +261,7 @@ export type NativeServerOptions = {
   handler: (
     request: IncomingMessage,
     response: ServerResponse,
-    boundary: BoundaryResult & { identity: Identity },
+    boundary: AuthorizedBoundary,
   ) => void | Promise<void>;
   throttle?: AuthThrottle;
 };
@@ -389,7 +390,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
         json(response, 200, { ok: true });
         return;
       }
-      await options.handler(request, response, result as BoundaryResult & { identity: Identity });
+      await options.handler(request, response, result as AuthorizedBoundary);
     })().catch(() => {
       if (!response.headersSent) json(response, 500, { error: "internal_error" });
       else response.destroy();
