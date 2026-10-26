@@ -12,7 +12,7 @@ export function issueToken(
   userId: string,
   name: string,
   role: Role,
-  expiresAt?: number,
+  expiresAt?: number | null,
   tokenFile?: string,
 ) {
   if (tokenFile) assertSafeNewTokenPath(tokenFile);

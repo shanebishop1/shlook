@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { NativeStore, Role } from "./store.ts";
+import { capSessionExpiry, tokenExpiryActive } from "./token-expiry.ts";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const NATIVE_SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -35,7 +36,7 @@ export function authenticateToken(
     !equalHex(digest, row.secretHash) ||
     row.disabled ||
     row.revokedAt ||
-    row.expiresAt <= now
+    !tokenExpiryActive(row.expiresAt, now)
   )
     return null;
   return {
@@ -51,10 +52,9 @@ export function createSession(store: NativeStore, identity: Identity, now = Date
   const token = store.db
     .prepare("SELECT expires_at FROM tokens WHERE id=? AND revoked_at IS NULL")
     .get(identity.tokenId) as { expires_at: number } | undefined;
-  if (!token || token.expires_at <= now) throw new Error("invalid token");
-  const expiresAt = Math.min(
-    now + NATIVE_SESSION_IDLE_MS,
-    now + NATIVE_SESSION_ABSOLUTE_MS,
+  if (!token || !tokenExpiryActive(token.expires_at, now)) throw new Error("invalid token");
+  const expiresAt = capSessionExpiry(
+    Math.min(now + NATIVE_SESSION_IDLE_MS, now + NATIVE_SESSION_ABSOLUTE_MS),
     token.expires_at,
   );
   store.db
@@ -77,16 +77,15 @@ export function authenticateSession(store: NativeStore, id: string, now = Date.n
     row.disabled ||
     row.revokedAt ||
     row.expiresAt <= now ||
-    row.tokenExpires <= now ||
+    !tokenExpiryActive(row.tokenExpires, now) ||
     now - row.lastSeen >= NATIVE_SESSION_IDLE_MS ||
     now - row.createdAt >= NATIVE_SESSION_ABSOLUTE_MS
   ) {
     if (row) store.db.prepare("DELETE FROM sessions WHERE session_hash=?").run(row.sessionHash);
     return null;
   }
-  const expiresAt = Math.min(
-    now + NATIVE_SESSION_IDLE_MS,
-    row.createdAt + NATIVE_SESSION_ABSOLUTE_MS,
+  const expiresAt = capSessionExpiry(
+    Math.min(now + NATIVE_SESSION_IDLE_MS, row.createdAt + NATIVE_SESSION_ABSOLUTE_MS),
     row.tokenExpires,
   );
   return {

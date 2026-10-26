@@ -212,11 +212,14 @@ export async function run(args: string[]): Promise<void> {
       const role = o.get("role", true)!;
       if (role !== "viewer" && role !== "publisher") throw new Error("invalid role");
       const expires = o.get("expires");
-      const expiresAt = expires === undefined ? undefined : Date.parse(expires);
+      const expiresAt =
+        expires === undefined ? undefined : expires === "none" ? null : Date.parse(expires);
       if (
         expires !== undefined &&
+        expires !== "none" &&
         (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(expires) ||
-          !Number.isFinite(expiresAt))
+          !Number.isFinite(expiresAt) ||
+          new Date(expiresAt!).toISOString().slice(0, 19) !== expires.slice(0, 19))
       )
         throw new Error("invalid expiry");
       const tokenFile = o.get("token-file");

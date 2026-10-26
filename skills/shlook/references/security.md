@@ -6,8 +6,11 @@
   separate data directories and hostnames. Ports do not isolate cookies.
 - Tokens are hashed server-side. Browser login exchanges a token for a host-only Secure/HttpOnly,
   SameSite=Lax cookie; never store the API token in browser storage.
+- Native API tokens default to 90 days (custom expiry up to 365 days). `--expires none` explicitly
+  issues a non-expiring token; keep it secret and revoke/rotate it when no longer needed.
 - Sessions: 30-day idle, 90-day absolute expiry, capped by token expiry. Revocation, user disable,
   logout, and re-login invalidate associated sessions. Mutations require exact origin and CSRF checks.
+  Non-expiring API tokens do not remove either browser-session limit.
 - Artifact HTML uses an opaque sandbox and restrictive CSP. Never enable `allow-same-origin` or
   serve unsandboxed uploads on the app origin. This is not malware scanning or an egress guarantee.
 - Cloudflare uses Access and [four separate origins](privacy.md). Native is private-only.

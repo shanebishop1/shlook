@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,84 @@ import { run } from "../../src/native/main.ts";
 import { createNativeApplication } from "../../src/native/router.ts";
 import { listenLoopback } from "../../src/native/server.ts";
 import { NativeStore } from "../../src/native/store.ts";
+
+test("token CLI explicitly issues/lists no expiry without leaking secrets or weakening file safety", () => {
+  const parent = mkdtempSync(join(tmpdir(), "shlook-token-cli-"));
+  const dataDir = join(parent, "instance");
+  const tokenFile = join(parent, "token");
+  const main = fileURLToPath(new URL("../../src/native/main.ts", import.meta.url));
+  const command = (...args: string[]) =>
+    spawnSync(process.execPath, [main, ...args, "--data-dir", dataDir], {
+      encoding: "utf8",
+      timeout: 10000,
+    });
+  try {
+    assert.equal(command("init", "--origin", "https://shlook.example").status, 0);
+    assert.equal(command("user", "add", "alice", "--display-name", "Alice").status, 0);
+    const issue = (name: string, file: string, ...expiry: string[]) =>
+      command(
+        "token",
+        "issue",
+        "--user",
+        "alice",
+        "--name",
+        name,
+        "--role",
+        "publisher",
+        "--token-file",
+        file,
+        ...expiry,
+      );
+    const issued = issue("none", tokenFile, "--expires", "none");
+    assert.equal(issued.status, 0, issued.stderr);
+    assert.equal(JSON.parse(issued.stdout).expiresAt, null);
+    const secret = readFileSync(tokenFile, "utf8").trim();
+    assert.match(secret, /^shlook_api_v1_[A-Za-z0-9_-]{43}$/);
+    assert.equal(statSync(tokenFile).mode & 0o777, 0o600);
+    assert.ok(!(issued.stdout + issued.stderr).includes(secret));
+    assert.notEqual(issue("overwrite", tokenFile, "--expires", "none").status, 0);
+    assert.equal(readFileSync(tokenFile, "utf8").trim(), secret);
+    const before = Date.now();
+    const defaultIssued = issue("default", join(parent, "default-token"));
+    const after = Date.now();
+    assert.equal(defaultIssued.status, 0, defaultIssued.stderr);
+    const defaultExpiry = JSON.parse(defaultIssued.stdout).expiresAt;
+    assert.ok(defaultExpiry >= before + 90 * 86400000 && defaultExpiry <= after + 90 * 86400000);
+    const datedExpiry = new Date(Date.now() + 86400000).toISOString();
+    const dated = issue("dated", join(parent, "dated-token"), "--expires", datedExpiry);
+    assert.equal(dated.status, 0, dated.stderr);
+    assert.equal(JSON.parse(dated.stdout).expiresAt, Date.parse(datedExpiry));
+    const invalidFile = join(parent, "invalid-token");
+    for (const invalid of [
+      "None",
+      "never",
+      "0",
+      "NaN",
+      "Infinity",
+      "garbage",
+      "2027-02-30T00:00:00Z",
+      "2027-01-01",
+      "9999-01-01T00:00:00Z",
+      "2000-01-01T00:00:00Z",
+    ]) {
+      const result = issue("invalid", invalidFile, "--expires", invalid);
+      assert.notEqual(result.status, 0, invalid);
+      assert.equal(existsSync(invalidFile), false);
+    }
+    const listed = command("token", "list", "--user", "alice");
+    assert.equal(listed.status, 0, listed.stderr);
+    const rows = JSON.parse(listed.stdout);
+    assert.equal(rows.length, 3);
+    assert.equal(rows.find((row: { name: string }) => row.name === "none").expiresAt, null);
+    assert.equal(
+      rows.find((row: { name: string }) => row.name === "default").expiresAt,
+      defaultExpiry,
+    );
+    assert.ok(!(listed.stdout + listed.stderr).includes(secret));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
 
 test("server executable runs through an installed-bin symlink", () => {
   const parent = mkdtempSync(join(tmpdir(), "shlook-server-bin-"));
