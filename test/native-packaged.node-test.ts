@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -209,7 +210,7 @@ test(
     timeout: 180_000,
   },
   async (t) => {
-    const temp = mkdtempSync(join(tmpdir(), "shlook-packed-native-"));
+    const temp = realpathSync(mkdtempSync(join(tmpdir(), "shlook-packed-native-")));
     const packed = join(temp, "packed");
     const unpacked = join(temp, "package");
     const xdg = join(temp, "xdg");
