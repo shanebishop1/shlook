@@ -1,6 +1,6 @@
 # Native self-hosting
 
-Node.js 24+, SQLite, local files; no Cloudflare account required. One process per data directory.
+Node.js 24.2+, SQLite, local files; no Cloudflare account required. One process per data directory.
 Users share a private library. Independent libraries need separate directories and hostnames.
 
 ## Initialize and administer

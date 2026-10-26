@@ -77,7 +77,7 @@ The creation API accepts the same metadata as JSON:
 For command grammar, JSON behavior, and environment-profile rules, see the
 [commands reference](skills/shlook/references/commands.md).
 
-Requires Node.js 24+ on macOS or Linux.
+Requires Node.js 24.2+ on macOS or Linux.
 
 ## Documentation
 
