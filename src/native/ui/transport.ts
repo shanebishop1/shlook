@@ -1,17 +1,24 @@
 /** All native mutations, including binary uploads, pass through this CSRF boundary. */
 export function nativeRequestScript(): string {
   return `
+let sessionRecoveryStarted = false;
+const recoverNativeSession = () => {
+  if (!sessionRecoveryStarted) { sessionRecoveryStarted = true; location.reload(); }
+  return new Error('Your session expired. Sign in again.');
+};
 const ownerRequest = async (path, init = {}) => {
   const headers = new Headers(init.headers);
   if (typeof init.body === 'string' && !headers.has('content-type')) headers.set('content-type', 'application/json');
   if (!['GET', 'HEAD'].includes((init.method || 'GET').toUpperCase())) {
     const session = await fetch('/api/session', { credentials: 'same-origin' });
+    if (session.status === 401) throw recoverNativeSession();
     if (!session.ok) throw new Error('Your session expired. Sign in again.');
     const { csrfToken } = await session.json();
     if (typeof csrfToken !== 'string' || !csrfToken) throw new Error('Session verification failed.');
     headers.set('X-Shlook-CSRF', csrfToken);
   }
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  if (response.status === 401) throw recoverNativeSession();
   let body = {};
   try { body = await response.json(); } catch {}
   if (!response.ok) {

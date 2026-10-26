@@ -127,6 +127,39 @@ test("native transport protects single/batch deletion, expiry and logout without
   assert.equal(new Headers(calls[0].init.headers).has("X-Shlook-CSRF"), false);
 });
 
+test("native requests recover expired sessions through document navigation, not API redirects", async () => {
+  for (const failure of ["session", "mutation", "read", "forbidden"]) {
+    let reloads = 0;
+    const fetch = async (path: string) => {
+      if (failure === "session" || failure === "read") return new Response(null, { status: 401 });
+      if (path === "/api/session") return Response.json({ csrfToken: "csrf" });
+      return new Response(null, { status: failure === "forbidden" ? 403 : 401 });
+    };
+    await new Function(
+      "fetch",
+      "location",
+      "read",
+      `return (async () => {
+      const document = { querySelector: () => null }, errorMessage = value => value;
+      ${nativeRequestScript()}
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { await ownerRequest('/api/assets/one', read ? {} : { method: 'DELETE' }); }
+        catch {}
+      }
+    })();`,
+    )(
+      fetch,
+      {
+        reload: () => {
+          reloads++;
+        },
+      },
+      failure === "read",
+    );
+    assert.equal(reloads, failure === "forbidden" ? 0 : 1, failure);
+  }
+});
+
 test("native previews resolve nested entrypoints once, encoding paths and retaining the canonical iframe seam", async () => {
   let requests = 0;
   const media = () => {

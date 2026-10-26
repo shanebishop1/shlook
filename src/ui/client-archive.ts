@@ -84,7 +84,6 @@ const bindPreviewImages = (root = document) => root.querySelectorAll('[data-prev
   } else if (image.complete && image.naturalWidth === 0) showPreviewFallback(image);
 });
 const releaseDetailPreview = (detail) => {
-  if (innerWidth >= 901) return;
   detail.querySelector('[data-preview-large] [data-preview-fallback]')?.removeAttribute('src');
 };
 const bindSelectionItems = (root = document) => root.querySelectorAll('[data-select-item]').forEach((item) => item.addEventListener('change', syncSelection));
@@ -169,6 +168,10 @@ const refreshArchive = async (path = '/', historyMode = 'replace') => {
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const response = await fetch(archivePath, { credentials: 'same-origin', signal: controller.signal });
+    if (response.status === 401) {
+      location.assign(archivePath);
+      throw new Error('Your session expired. Sign in again.');
+    }
     if (!response.ok) throw new Error('Archive refresh failed.');
     const nextDocument = new DOMParser().parseFromString(await response.text(), 'text/html');
     const nextBody = nextDocument.querySelector('.ledger tbody');
