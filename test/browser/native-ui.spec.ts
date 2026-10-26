@@ -11,6 +11,7 @@ import { issueToken } from "../../src/native/admin.ts";
 import { createNativeApplication } from "../../src/native/router.ts";
 import { createNativeUiHandler } from "../../src/native/ui/index.ts";
 import { validateConfig } from "../../src/native/config.ts";
+import { renderSafeMarkdown } from "../../src/markdown.ts";
 
 const listen = (server: HttpServer | HttpsServer) =>
   new Promise<number>((resolve, reject) => {
@@ -180,6 +181,16 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       30 * 86400_000 + 5_000,
     );
     expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+    const markdownSample = "# Shared renderer\n\n<script>bad()</script>\n\n- safe";
+    expect(
+      await page.evaluate(
+        (source) =>
+          (
+            window as Window & { renderSafeMarkdown?: (value: string) => string }
+          ).renderSafeMarkdown?.(source),
+        markdownSample,
+      ),
+    ).toBe(renderSafeMarkdown(markdownSample));
     const upload = async (
       name: string,
       files: Array<{ name: string; mimeType: string; buffer: Buffer }>,
@@ -193,8 +204,20 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         writeFileSync(path, file.buffer);
       }
       await page.locator("input[webkitdirectory]").setInputFiles(folder);
+      await page.locator("#upload-status").evaluate((status) => (status.textContent = ""));
       await page.getByRole("button", { name: "Upload and publish" }).click();
-      await expect(page.getByText("Published successfully")).toBeVisible();
+      await expect(page.locator("#upload-status")).not.toHaveText("");
+      await expect(page.locator("#upload-status")).toHaveText("Published successfully");
+    };
+    const uploadSingle = async (name: string, fileName: string, buffer: Buffer) => {
+      await page.getByLabel("Name", { exact: true }).fill(name);
+      await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles({
+        name: fileName,
+        mimeType: "application/octet-stream",
+        buffer,
+      });
+      await page.locator("#upload-status").evaluate((status) => (status.textContent = ""));
+      await page.getByRole("button", { name: "Upload and publish" }).click();
     };
     await upload("bundle", [
       {
@@ -228,6 +251,62 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     await upload("notes", [
       { name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Notes\n\nhello") },
     ]);
+    const inertDirectoryMarkdown = store!.db
+      .prepare(
+        "SELECT path FROM asset_files f JOIN assets a ON a.id=f.asset_id WHERE a.name=? AND f.path LIKE 'fixture-notes/%'",
+      )
+      .get("notes") as { path: string };
+    expect(inertDirectoryMarkdown.path).toBe("fixture-notes/notes.md");
+    await uploadSingle(
+      "single-notes",
+      "single.md",
+      Buffer.from('# Single note\n\n<img src="https://bad.invalid/x">'),
+    );
+    await expect(page.locator("#upload-status")).toHaveText("Published successfully");
+    const singleMarkdown = store!.db
+      .prepare(
+        "SELECT path,object_key AS objectKey FROM asset_files f JOIN assets a ON a.id=f.asset_id WHERE a.name=?",
+      )
+      .get("single-notes") as { path: string; objectKey: string };
+    expect(singleMarkdown.path).toBe("single.md.html");
+    expect(
+      readFileSync(join(store!.directory, "objects", singleMarkdown.objectKey), "utf8"),
+    ).toContain("&lt;img src=");
+    const assetsBeforeInvalidMarkdown = (
+      store!.db.prepare("SELECT COUNT(*) AS count FROM assets").get() as { count: number }
+    ).count;
+    await uploadSingle("invalid-utf8", "invalid.md", Buffer.from([0xc3, 0x28]));
+    await expect(page.getByText(/Markdown must contain valid UTF-8/)).toBeVisible();
+    await uploadSingle("expanded-markdown", "expanded.md", Buffer.alloc(6 * 1024 * 1024, 0x26));
+    await expect(page.getByText(/Generated Markdown HTML exceeds 25 MiB/)).toBeVisible();
+    await uploadSingle("single-mdx", "unsupported.mdx", Buffer.from("export default 1"));
+    await expect(page.getByText(/Single-file MDX is unsupported/)).toBeVisible();
+    expect(
+      (store!.db.prepare("SELECT COUNT(*) AS count FROM assets").get() as { count: number }).count,
+    ).toBe(assetsBeforeInvalidMarkdown);
+    await uploadSingle(
+      "standalone-pixel",
+      "pixel.png",
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pWQAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
+    await page
+      .locator('article:has(h2:text("standalone-pixel"))')
+      .getByRole("button", { name: "Preview" })
+      .click();
+    await expect(page.frameLocator("#preview").locator("img")).toBeVisible();
+    await expect
+      .poll(() =>
+        page
+          .frameLocator("#preview")
+          .locator("img")
+          .evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBe(1);
+    await page.getByRole("button", { name: "Close" }).click();
+    await expect(page.locator("#preview")).not.toHaveAttribute("src", /.+/);
     await expect(page.getByText("bundle", { exact: true })).toBeVisible();
     const bundleId = await page.evaluate(async () => {
       const assets = await (await fetch("/api/assets")).json();
