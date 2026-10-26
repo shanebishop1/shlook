@@ -90,6 +90,22 @@ test("loads valid small input with bytes and content types", async () => {
   });
 });
 
+test("enumerates complete descriptor directory streams across record sizes and repeated reads", async () => {
+  const directory = await temporaryDirectory();
+  const names = ["index.html", "x", `${"a".repeat(240)}.txt`, "画像.png"];
+  for (const name of names) await writeFile(join(directory, name), name);
+  const handle = await publishFilesystem.openRoot(directory);
+  try {
+    // Exercise the real fdopendir/readdir pair. Short first records catch mixed
+    // inode ABIs; varied lengths check bounded decoding, not a fixed struct copy.
+    for (let index = 0; index < 2; index += 1) {
+      assert.deepEqual((await publishFilesystem.entries(handle)).sort(), [...names].sort());
+    }
+  } finally {
+    await handle.close();
+  }
+});
+
 test("renders only the conservative Markdown subset and escapes active syntax", () => {
   const rendered = renderSafeMarkdown(
     '# Heading\n\nA <script>alert("x")</script> [remote](https://example.com)\n\n- first\n- second\n\n```html\n<img src=x onerror=alert(1)>\n```',

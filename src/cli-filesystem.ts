@@ -57,11 +57,13 @@ async function darwinFilesystem() {
   // Preserve the variadic ABI: on Apple arm64 the buffer is passed on the stack,
   // not in the third argument register of a non-variadic function.
   const fcntl = libc.func("int fcntl(int fd, int command, ...)");
-  const fdopendir = libc.func("void *fdopendir(int fd)");
-  // Darwin's 64-bit inode ABI (sys/dirent.h), shared by arm64 and x64.
-  const next = libc.func(process.arch === "x64" ? "readdir$INODE64" : "readdir", "void *", [
-    "void *",
-  ]);
+  // Match Darwin dirent.h's constructor AND reader aliases. fdopendir primes
+  // DIR's buffer, so the legacy x64 constructor supplies 32-bit inode records
+  // even if the next call uses readdir$INODE64. arm64 needs no symbol suffix.
+  const inodeSuffix = process.arch === "x64" ? "$INODE64" : "";
+  const fdopendir = libc.func(`fdopendir${inodeSuffix}`, "void *", ["int"]);
+  const next = libc.func(`readdir${inodeSuffix}`, "void *", ["void *"]);
+  // Unlike fdopendir/readdir, closedir has no inode-width alias on either ISA.
   const closedir = libc.func("int closedir(void *directory)");
   const closeFd = libc.func("int close(int fd)");
 
