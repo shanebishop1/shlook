@@ -4,6 +4,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readConnectionToken } from "./connection.ts";
+import {
+  loadProfileCredential,
+  saveProfileCredential,
+  removeProfileCredential,
+} from "../cli-connection.ts";
 import type { CliDependencies } from "./types.ts";
 import type { SetupCommandOptions } from "../cli-setup-runtime.ts";
 
@@ -56,6 +61,18 @@ export function defaultCliDependencies(): CliDependencies {
     stderr: (value) => process.stderr.write(value),
     readSecretInput: () => readConnectionToken(process.stdin, process.stderr),
     currentUid: () => process.getuid?.(),
+    saveProfileCredential: (name, type, url, token) =>
+      saveProfileCredential(name, type, url, token, {
+        env: process.env,
+        currentUid: () => process.getuid?.(),
+      }),
+    loadProfileCredential: (name, type, url) =>
+      loadProfileCredential(name, type, url, {
+        env: process.env,
+        currentUid: () => process.getuid?.(),
+      }),
+    removeProfileCredential: (name) =>
+      removeProfileCredential(name, { env: process.env, currentUid: () => process.getuid?.() }),
   };
 }
 

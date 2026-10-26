@@ -193,7 +193,11 @@ export async function applySetupRuntime(
   manifest = await reconcileManifest(input, manifest, dependencies);
   await verifyDeployment(result, credential, dependencies);
 
-  const connectionPath = await verifiedPersistedConnection(credential, dependencies);
+  const connectionForPersistence =
+    dependencies.connectionOrigins === undefined
+      ? credential
+      : { ...credential, origins: dependencies.connectionOrigins };
+  const connectionPath = await verifiedPersistedConnection(connectionForPersistence, dependencies);
   if (rotation !== undefined) await removeServiceTokenRotation(dependencies);
   if (pending !== undefined) await removePendingServiceToken(dependencies);
 

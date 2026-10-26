@@ -54,6 +54,7 @@ export interface SetupRuntimeDependencies extends CloudflareSetupDependencies {
   runCommand: SetupCommandRunner;
   loadConnection?: () => Promise<ConnectionCredential>;
   persistConnection: (credential: ConnectionCredential) => Promise<string>;
+  connectionOrigins?: ApplySetupResult["origins"];
   planCloudflareSetup?: (
     input: SetupInput,
     dependencies: CloudflareSetupDependencies,

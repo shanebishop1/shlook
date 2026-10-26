@@ -11,6 +11,7 @@ import {
   encodeConnectionCredential,
   loadConnectionCredential,
   persistConnectionCredential,
+  saveProfileCredential,
   resolveConnectionAuthPath,
   type ConnectionCredential,
   type ConnectionFileSystem,
@@ -107,6 +108,44 @@ test("resolves only safe absolute XDG or home auth paths", () => {
   ).toThrow("invalid connection auth path");
   expect(() => resolveConnectionAuthPath({ env: {}, home: () => "/" })).toThrow(
     "invalid connection auth path",
+  );
+});
+
+test("stores named credentials separately with 0600 mode", async () => {
+  let wrote = false;
+  let writeMode = 0;
+  const fs: ConnectionFileSystem = {
+    mkdir: vi.fn(async () => undefined),
+    realpath: vi.fn(async (path) => path),
+    writeFile: vi.fn(async (_path, _data, options) => {
+      wrote = true;
+      writeMode = options.mode;
+    }),
+    rename: vi.fn(async () => undefined),
+    chmod: vi.fn(async () => undefined),
+    unlink: vi.fn(async () => undefined),
+    open: vi.fn(async () => {
+      if (!wrote) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return {
+        chmod: vi.fn(async () => undefined),
+        stat: vi.fn(async () => ({ isFile: () => true, uid: 123, mode: 0o100600, size: 1 })),
+        read: vi.fn(async () => ({ bytesRead: 0 })),
+        close: vi.fn(async () => undefined),
+      };
+    }),
+  };
+  await saveProfileCredential(
+    "office",
+    "native",
+    "https://office.example",
+    "shlook_api_v1_" + "x".repeat(43),
+    { env: { XDG_CONFIG_HOME: "/safe/config" }, currentUid: () => 123, fs },
+  );
+  expect(writeMode).toBe(0o600);
+  expect(fs.writeFile).toHaveBeenCalledWith(
+    expect.stringContaining(".credentials.json."),
+    expect.any(String),
+    expect.objectContaining({ mode: 0o600, flag: "wx" }),
   );
 });
 

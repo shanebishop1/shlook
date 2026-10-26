@@ -101,7 +101,15 @@ export async function assetCommand(
   options: { offset?: string },
   dependencies: CliDependencies,
 ): Promise<unknown> {
-  if (command === "status") return api(dependencies, "/health");
+  if (command === "status") {
+    if (dependencies.backend === "native")
+      return {
+        ...((await api(dependencies, "/api/me")) as object),
+        instance: dependencies.instanceName,
+        origin: dependencies.selectedOrigin,
+      };
+    return api(dependencies, "/health");
+  }
   if (command === "list") {
     const offset =
       options.offset === undefined ? "" : `?offset=${encodeURIComponent(options.offset)}`;
@@ -112,9 +120,19 @@ export async function assetCommand(
     const id = requireAssetId(args[0]);
     if (!["private", "secret_link", "public"].includes(args[1] ?? ""))
       throw new CliError("usage_error", "invalid visibility");
+    if (dependencies.backend === "native" && args[1] !== "private")
+      throw new CliError(
+        "unsupported_operation",
+        "native instances support private visibility only",
+      );
     return api(dependencies, `/api/assets/${id}/visibility`, "PATCH", { visibility: args[1] });
   }
   if (command === "secret") {
+    if (dependencies.backend === "native")
+      throw new CliError(
+        "unsupported_operation",
+        "secret links are not supported by native instances",
+      );
     const [operation, rawId] = args;
     const id = requireAssetId(rawId);
     if (!["create", "rotate", "revoke"].includes(operation ?? ""))
@@ -124,6 +142,11 @@ export async function assetCommand(
     return api(dependencies, `/api/assets/${id}/secret${query}`, method);
   }
   if ((command === "share" || command === "hard") && args[0] === "expiry") {
+    if (dependencies.backend === "native" && command === "share")
+      throw new CliError(
+        "unsupported_operation",
+        "share expiry is not supported by native instances",
+      );
     const id = requireAssetId(args[1]);
     const field = command === "share" ? "shareExpiresAt" : "hardExpiresAt";
     return api(dependencies, `/api/assets/${id}/expiry`, "PATCH", {

@@ -8,7 +8,7 @@ shlook CLI --Access service token--> Owner origin / owner API
                                        +-- private R2: artifact bytes
 ```
 
-Each deployment uses four distinct, pathless HTTPS origins:
+Cloudflare deployments use four distinct, pathless HTTPS origins:
 
 | Origin  | Purpose                                    | Access   |
 | ------- | ------------------------------------------ | -------- |
@@ -56,3 +56,11 @@ Entrypoint aliases redirect to the actual file path so nested relative resources
 Unknown routes and artifacts unavailable to the requested audience return `404`. Follow the
 [verification reference](../skills/shlook/references/verification.md) after publication and after
 visibility or lifecycle changes.
+
+## Native backend
+
+Native uses SQLite/files and a loopback Node listener behind one configured HTTPS origin.
+API tokens identify users; browser login exchanges a token for a persistent protected cookie.
+Users share a private library: viewers read, publishers modify. Uploads render only as compiled,
+opaque-sandboxed documents. See [security](../skills/shlook/references/security.md) for session,
+CSRF, and isolation constraints, and [self-hosting](../skills/shlook/references/self-host.md) for setup.

@@ -1,6 +1,13 @@
 import { loadConnectionCredential, type ConnectionCredential } from "../cli-connection.ts";
 
 import { CliError } from "./errors.ts";
+import {
+  loadProfileConfig,
+  resolveNamedToken,
+  effectiveTokenEnv,
+  saveNamedCredential,
+  type InstanceProfile,
+} from "./profiles.ts";
 import type { CliDependencies } from "./types.ts";
 
 const connectionEnvironmentKeys = [
@@ -41,10 +48,111 @@ export function usesConnectionProfile(positionals: string[]): boolean {
 
 export async function withConnectionProfile(
   dependencies: CliDependencies,
+  selectedName?: string,
 ): Promise<CliDependencies> {
-  const hasEnvironmentProfile = connectionEnvironmentKeys.some(
+  const hasLegacySelector = connectionEnvironmentKeys.some(
     (key) => dependencies.env[key] !== undefined,
   );
+  if (selectedName === undefined && hasLegacySelector)
+    return withLegacyConnectionProfile(dependencies);
+  const config = await loadProfileConfig(dependencies);
+  const selected = selectedName ?? (!hasLegacySelector ? config.default : undefined);
+  if (selectedName !== undefined || selected !== undefined) {
+    const profile: InstanceProfile | undefined = config.instances[selected!];
+    if (!profile) throw new CliError("instance_not_found", `instance not found: ${selected}`);
+    const tokenEnv = effectiveTokenEnv(selected!, profile);
+    let token: string;
+    try {
+      token = await resolveNamedToken(dependencies, selected!, profile);
+    } catch (cause) {
+      if (
+        !(cause instanceof CliError) ||
+        cause.code !== "auth_required" ||
+        process.stdin.isTTY !== true ||
+        dependencies.readSecretInput === undefined
+      )
+        throw cause;
+      try {
+        token = await dependencies.readSecretInput();
+        let headers: Record<string, string>;
+        if (profile.type === "native") {
+          if (!/^shlook_api_v1_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error();
+          headers = { Authorization: `Bearer ${token}` };
+        } else {
+          const { decodeConnectionCredential } = await import("../cli-connection.ts");
+          const credential = decodeConnectionCredential(token);
+          if (
+            credential.origins?.owner !== profile.url ||
+            credential.origins.private !== profile.origins.private ||
+            credential.origins.public !== profile.origins.public ||
+            credential.origins.share !== profile.origins.share
+          )
+            throw new Error();
+          headers = {
+            "CF-Access-Client-Id": credential.accessClientId,
+            "CF-Access-Client-Secret": credential.accessClientSecret,
+            "x-shlook-client": "1",
+          };
+        }
+        const response = await dependencies.fetch(`${profile.url}/health`, {
+          method: "GET",
+          headers,
+          redirect: "manual",
+        });
+        if (!response.ok || !(await validHealth(response))) throw new Error();
+        await saveNamedCredential(dependencies, selected!, profile.type, profile.url, token);
+      } catch {
+        throw new CliError(
+          "invalid_credential",
+          "connection credential is invalid or could not be verified",
+        );
+      }
+    }
+    if (profile.type === "native")
+      return {
+        ...dependencies,
+        backend: "native",
+        instanceName: selected,
+        selectedInstanceExplicit: selectedName !== undefined,
+        selectedOrigin: profile.url,
+        profileTokenEnv: tokenEnv,
+        env: { ...dependencies.env, [tokenEnv]: token },
+      };
+    const { decodeConnectionCredential } = await import("../cli-connection.ts");
+    let credential;
+    try {
+      credential = decodeConnectionCredential(token);
+    } catch {
+      throw new CliError("invalid_credential", "configured credential is invalid");
+    }
+    if (
+      credential.origins === undefined ||
+      credential.origins.owner !== profile.url ||
+      credential.origins.private !== profile.origins.private ||
+      credential.origins.public !== profile.origins.public ||
+      credential.origins.share !== profile.origins.share
+    )
+      throw new CliError(
+        "invalid_credential",
+        "configured credential does not match instance origins",
+      );
+    return {
+      ...dependencies,
+      backend: "cloudflare",
+      instanceName: selected,
+      selectedOrigin: profile.url,
+      env: {
+        ...dependencies.env,
+        CF_ACCESS_CLIENT_ID: credential.accessClientId,
+        CF_ACCESS_CLIENT_SECRET: credential.accessClientSecret,
+        SHLOOK_API_ORIGIN: profile.url,
+        SHLOOK_PRIVATE_ORIGIN: profile.origins.private,
+        SHLOOK_PUBLIC_ORIGIN: profile.origins.public,
+        SHLOOK_SHARE_ORIGIN: profile.origins.share,
+      },
+    };
+  }
+  const hasEnvironmentProfile = hasLegacySelector;
   if (hasEnvironmentProfile) {
     const hasCredentials =
       dependencies.env.CF_ACCESS_CLIENT_ID !== undefined &&
@@ -98,6 +206,54 @@ export async function withConnectionProfile(
           }),
     },
   };
+}
+
+async function validHealth(response: Response): Promise<boolean> {
+  if (
+    response.status === 204 ||
+    (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/json"
+  )
+    return false;
+  try {
+    const value: unknown = await response.json();
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 2 &&
+      (value as { ok?: unknown }).ok === true &&
+      (value as { service?: unknown }).service === "shlook"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function withLegacyConnectionProfile(
+  dependencies: CliDependencies,
+): Promise<CliDependencies> {
+  const hasCredentials =
+    dependencies.env.CF_ACCESS_CLIENT_ID !== undefined &&
+    dependencies.env.CF_ACCESS_CLIENT_SECRET !== undefined;
+  if (!hasCredentials)
+    throw new CliError(
+      "auth_required",
+      "CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required",
+    );
+  const hasDomain = dependencies.env.SHLOOK_DOMAIN !== undefined;
+  const hasAllOrigins = [
+    dependencies.env.SHLOOK_API_ORIGIN,
+    dependencies.env.SHLOOK_PRIVATE_ORIGIN,
+    dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+    dependencies.env.SHLOOK_SHARE_ORIGIN,
+  ].every((value) => value !== undefined);
+  if (!hasDomain && !hasAllOrigins)
+    throw new CliError(
+      "configuration_required",
+      "SHLOOK_DOMAIN or all four shlook origins are required",
+    );
+  return dependencies;
 }
 
 function configuredOrigin(value: string | undefined, name: string): string {
@@ -173,9 +329,11 @@ export function origins(dependencies: CliDependencies) {
 }
 
 export function origin(dependencies: CliDependencies): string {
+  if (dependencies.selectedOrigin !== undefined) return dependencies.selectedOrigin;
   return origins(dependencies).owner;
 }
 
 export function privateOrigin(dependencies: CliDependencies): string {
+  if (dependencies.backend === "native") return dependencies.selectedOrigin!;
   return origins(dependencies).private;
 }

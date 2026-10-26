@@ -3,6 +3,7 @@ import { access, open, readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import { maxPublicationBytes, maxUploadBytes, maxUploadFiles } from "./upload-limits.ts";
+import { renderSafeMarkdown } from "./markdown.ts";
 
 export interface PublishFile {
   path: string;
@@ -329,25 +330,35 @@ export async function loadPublishInput(
     if (metadata.isFile()) {
       const name = parsePath(path).base;
       const extension = extname(name).toLowerCase();
-      if (![".html", ".htm", ...Object.keys(rasterTypes)].includes(extension)) {
-        throw new Error("single-file publish requires HTML or a raster image");
+      if (extension === ".mdx") {
+        throw new Error("MDX single-file entrypoints are not supported");
       }
-      if (requestedEntrypoint !== undefined && requestedEntrypoint !== name) {
+      if (![".html", ".htm", ".md", ...Object.keys(rasterTypes)].includes(extension)) {
+        throw new Error("single-file publish requires HTML, Markdown, or a raster image");
+      }
+      const entrypoint = extension === ".md" ? `${name}.html` : name;
+      if (requestedEntrypoint !== undefined && requestedEntrypoint !== entrypoint) {
         throw new Error("single-file entrypoint must equal the filename");
       }
       if (!Number.isSafeInteger(metadata.size) || metadata.size > maxUploadBytes) {
         throw new Error("publish input contains a file larger than 25 MiB");
       }
+      const original = await readCandidate({
+        path: name,
+        handle,
+        size: metadata.size,
+        contentType: contentType(name),
+      });
+      if (extension !== ".md") return { entrypoint, files: [original] };
+      const source = new TextDecoder("utf-8", { fatal: true }).decode(original.bytes);
+      const rendered = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>\n${renderSafeMarkdown(source)}\n</body></html>\n`;
+      const bytes = new TextEncoder().encode(rendered);
+      if (bytes.byteLength > maxUploadBytes) {
+        throw new Error("generated Markdown HTML is larger than 25 MiB");
+      }
       return {
-        entrypoint: name,
-        files: [
-          await readCandidate({
-            path: name,
-            handle,
-            size: metadata.size,
-            contentType: contentType(name),
-          }),
-        ],
+        entrypoint,
+        files: [{ path: entrypoint, bytes, contentType: "text/html; charset=utf-8" }],
       };
     }
     if (!metadata.isDirectory())

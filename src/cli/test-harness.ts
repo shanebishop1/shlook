@@ -79,6 +79,7 @@ export function harness(overrides: Partial<CliDependencies> = {}) {
             "--show-connection-token",
             "--adopt-existing",
             "--from-env",
+            "--allow-loopback-http",
           ].includes(value)
         )
           options[
@@ -99,6 +100,9 @@ export function harness(overrides: Partial<CliDependencies> = {}) {
             "--domain",
             "--owner-email",
             "--account-id",
+            "--instance",
+            "--url",
+            "--token-env",
           ].includes(value)
         )
           options[
