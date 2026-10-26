@@ -214,7 +214,7 @@ export class NativeStore {
       throw e;
     }
   }
-  issueToken(input: { userId: string; name: string; role: Role; expiresAt?: number }) {
+  issueToken(input: { userId: string; name: string; role: Role; expiresAt?: number | null }) {
     if (
       !input.name.trim() ||
       input.name.length > 100 ||
@@ -222,8 +222,11 @@ export class NativeStore {
     )
       throw new Error("invalid token");
     const now = Date.now(),
-      expiresAt = input.expiresAt ?? now + 90 * 86400000;
-    if (expiresAt <= now || expiresAt > now + 365 * 86400000)
+      expiresAt = input.expiresAt === undefined ? now + 90 * 86400000 : input.expiresAt;
+    if (
+      expiresAt !== null &&
+      (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + 365 * 86400000)
+    )
       throw new Error("invalid token expiry");
     const user = this.db.prepare("SELECT disabled FROM users WHERE id=?").get(input.userId) as
       | { disabled: number }
@@ -236,13 +239,21 @@ export class NativeStore {
       .prepare(
         "INSERT INTO tokens(id,user_id,name,role,secret_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?)",
       )
-      .run(id, input.userId, input.name.trim(), input.role, hash, now, expiresAt);
+      .run(
+        id,
+        input.userId,
+        input.name.trim(),
+        input.role,
+        hash,
+        now,
+        expiresAt === null ? 0 : expiresAt,
+      );
     return { id, secret, expiresAt };
   }
   listTokens(userId: string) {
     return this.db
       .prepare(
-        "SELECT id,name,role,created_at AS createdAt,expires_at AS expiresAt,revoked_at AS revokedAt FROM tokens WHERE user_id=? ORDER BY created_at",
+        "SELECT id,name,role,created_at AS createdAt,NULLIF(expires_at,0) AS expiresAt,revoked_at AS revokedAt FROM tokens WHERE user_id=? ORDER BY created_at",
       )
       .all(userId);
   }

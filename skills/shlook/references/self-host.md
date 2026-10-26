@@ -17,6 +17,17 @@ shlook-server start --data-dir "$HOME/.local/share/shlook"
 Tokens are shown once on a local TTY; use `--token-file <new-path>` for headless issuance.
 Transfer securely, then delete that file. Connect clients using [instance profiles](instances.md).
 
+API tokens expire after 90 days by default. Set `--expires <UTC-ISO-timestamp>` for a future
+expiry up to 365 days away, or explicitly choose no expiration:
+
+```bash
+shlook-server token issue --user operator --name automation --role publisher --expires none --token-file "$HOME/shlook-token-new" --data-dir "$HOME/.local/share/shlook"
+```
+
+The token file must be a new absolute path and is created with mode `0600`. Issuance and
+listing report `expiresAt: null` for non-expiring tokens. These remain valid until revoked
+or the user is disabled; protect and rotate them deliberately. Browser sessions still expire.
+
 ```text
 shlook-server user list --data-dir <path>
 shlook-server user disable <user-id> --data-dir <path>

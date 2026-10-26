@@ -225,11 +225,16 @@ async function createAsset(port: number, token: string) {
   return JSON.parse(response.body).asset.id as string;
 }
 
-test("revalidates bearer authorization after slow create and finalize JSON bodies", async () => {
+test("revalidates non-expiring bearer authorization after slow create and finalize JSON bodies", async () => {
   const f = fixture();
   const port = await listen(f.app.server);
   try {
-    const token = f.store.issueToken({ userId: "test-user", name: "slow", role: "publisher" });
+    const token = f.store.issueToken({
+      userId: "test-user",
+      name: "slow",
+      role: "publisher",
+      expiresAt: null,
+    });
     const createStatus = await slowAuthorizedJson(
       port,
       token.secret,
@@ -245,6 +250,7 @@ test("revalidates bearer authorization after slow create and finalize JSON bodie
       userId: "test-user",
       name: "finalize",
       role: "publisher",
+      expiresAt: null,
     });
     const created = await request(
       port,
@@ -296,6 +302,7 @@ test("revalidates bearer authorization after slow create and finalize JSON bodie
       userId: "test-user",
       name: "revoked during upload",
       role: "publisher",
+      expiresAt: null,
     });
     const objectsBeforeFailedUpload = readdirSync(`${f.directory}/objects`).length;
     const stagingBeforeFailedUpload = readdirSync(`${f.directory}/staging`).length;
@@ -344,6 +351,7 @@ test("revalidates bearer authorization after slow create and finalize JSON bodie
       userId: "test-user",
       name: "revoked during visibility",
       role: "publisher",
+      expiresAt: null,
     });
     const visibilityStatus = await slowAuthorizedJson(
       port,
@@ -359,6 +367,7 @@ test("revalidates bearer authorization after slow create and finalize JSON bodie
       userId: "test-user",
       name: "revoked before delete",
       role: "publisher",
+      expiresAt: null,
     });
     const deleteAssetId = await createAsset(port, f.token);
     f.store.revokeToken(deleteToken.id);
@@ -424,7 +433,7 @@ test("revalidates bearer authorization after slow create and finalize JSON bodie
   }
 });
 
-test("writer-lock revocation is rechecked atomically before create and upload reservation", async () => {
+test("non-expiring token revocation is rechecked atomically before create and upload reservation", async () => {
   const f = fixture();
   const port = await listen(f.app.server);
   const databasePath = `${f.directory}/server.sqlite`;
@@ -434,6 +443,7 @@ test("writer-lock revocation is rechecked atomically before create and upload re
       userId: "test-user",
       name: "create lock",
       role: "publisher",
+      expiresAt: null,
     });
     const createRevoker = startLockedRevoker(databasePath, createToken.id);
     child = createRevoker.child;
@@ -462,6 +472,7 @@ test("writer-lock revocation is rechecked atomically before create and upload re
       userId: "test-user",
       name: "reservation lock",
       role: "publisher",
+      expiresAt: null,
     });
     const objectCount = readdirSync(`${f.directory}/objects`).length;
     const stagingCount = readdirSync(`${f.directory}/staging`).length;
@@ -508,7 +519,7 @@ test("writer-lock revocation is rechecked atomically before create and upload re
   }
 });
 
-test("separate-process revocation during compilation prevents finalization commit and permits retry", async () => {
+test("separate-process non-expiring token revocation during compilation prevents commit and permits retry", async () => {
   const f = fixture();
   const port = await listen(f.app.server);
   let child: ChildProcessWithoutNullStreams | undefined;
@@ -518,6 +529,7 @@ test("separate-process revocation during compilation prevents finalization commi
       userId: "test-user",
       name: "slow finalizer source",
       role: "publisher",
+      expiresAt: null,
     });
     const html = `<html><body>${"<p>compile-race</p>".repeat(500_000)}</body></html>`;
     const uploaded = await request(
@@ -590,7 +602,7 @@ test("separate-process revocation during compilation prevents finalization commi
   }
 });
 
-test("writer-lock revocation is atomic with expiry and deletion mutations", async () => {
+test("non-expiring token revocation is atomic with expiry and deletion mutations", async () => {
   const f = fixture();
   const port = await listen(f.app.server);
   let child: ChildProcessWithoutNullStreams | undefined;
@@ -626,6 +638,7 @@ test("writer-lock revocation is atomic with expiry and deletion mutations", asyn
       userId: "test-user",
       name: "expiry lock",
       role: "publisher",
+      expiresAt: null,
     });
     const expiryRevoker = startLockedRevoker(`${f.directory}/server.sqlite`, expiryToken.id);
     child = expiryRevoker.child;
@@ -662,6 +675,7 @@ test("writer-lock revocation is atomic with expiry and deletion mutations", asyn
       userId: "test-user",
       name: "delete lock",
       role: "publisher",
+      expiresAt: null,
     });
     const deleteRevoker = startLockedRevoker(`${f.directory}/server.sqlite`, deleteToken.id);
     child = deleteRevoker.child;
