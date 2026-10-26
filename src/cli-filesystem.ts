@@ -85,7 +85,9 @@ async function darwinFilesystem() {
       if (fcntl(handle.fd, 50, "void *", buffer) < 0) throw failure("F_GETPATH");
       const end = buffer.indexOf(0);
       if (end < 1) throw new Error("invalid publish input descriptor path");
-      return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, end));
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        buffer.subarray(0, end),
+      );
     },
     entries(handle: InputHandle): string[] {
       // A fresh open description avoids disturbing the held directory's offset.
@@ -116,7 +118,7 @@ async function darwinFilesystem() {
             throw new Error("unterminated directory entry name");
           }
           const bytes = Buffer.from(koffi.view(koffi.address(entry) + 21n, length));
-          const name = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          const name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
           if (name !== "." && name !== "..") names.push(name);
         }
         return names;

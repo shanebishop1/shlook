@@ -161,6 +161,25 @@ test("rejects NUL input components instead of truncating native C paths", async 
   await assert.rejects(loadPublishInput(`${path}\0ignored.html`), /unsafe path component/);
 });
 
+test("preserves distinct BOM-prefixed filenames and their bytes", async () => {
+  const directory = await temporaryDirectory();
+  const expected = {
+    "index.html": "ordinary",
+    "\uFEFFindex.html": "BOM-prefixed filename",
+  };
+  for (const [name, contents] of Object.entries(expected)) {
+    await writeFile(join(directory, name), contents);
+  }
+  const loaded = await loadPublishInput(directory);
+  assert.equal(loaded.files.length, 2);
+  assert.deepEqual(
+    Object.fromEntries(
+      loaded.files.map((file) => [file.path, new TextDecoder().decode(file.bytes)]),
+    ),
+    expected,
+  );
+});
+
 test(
   "rejects FIFOs without waiting for a writer and rejects device input",
   { timeout: 5000 },
