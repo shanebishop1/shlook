@@ -238,7 +238,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain("try { await refreshArchive(); } catch {}");
     expect(body).toContain("history.replaceState(null, '', archivePath);");
     expect(body).toContain("mobilePreviewObserver?.disconnect();");
-    expect(body).toContain("const previewsSuspended = suspendArchivePreviews();");
+    expect(body).toContain("const previewsSuspended = !passive && suspendArchivePreviews();");
+    expect(body).toContain("document.visibilityState === 'visible' && document.hasFocus()");
     expect(body).toContain("setStatus(null, 'Loading archive...');");
     expect(body).toContain("controller.abort(), 12000");
     expect(body).toContain("navigateArchive(link.href, 'push');");
