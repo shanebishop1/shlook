@@ -83,7 +83,9 @@ function cli(
     child.once("close", (code) => {
       clearTimeout(timeout);
       if (code !== 0) {
-        rejectCli(new Error(`packed CLI failed (${code}): ${stderr}`));
+        const instance = args.indexOf("--instance");
+        const label = instance < 0 ? args[0] : `${args[0]} (${args[instance + 1]})`;
+        rejectCli(new Error(`packed CLI ${label} failed (${code}): ${stderr}`));
         return;
       }
       try {
@@ -223,6 +225,7 @@ test(
     let server: ReturnType<typeof launchServer> | undefined;
     let secondServer: ReturnType<typeof launchServer> | undefined;
     let proxy: ReturnType<typeof createHttpsServer> | undefined;
+    let aliasProxy: ReturnType<typeof createHttpsServer> | undefined;
     let secondProxy: ReturnType<typeof createHttpsServer> | undefined;
     let browser: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
     try {
@@ -300,7 +303,7 @@ test(
       env.NODE_EXTRA_CA_CERTS = certFile;
       let primaryUpstreamPort = 0;
       let secondaryUpstreamPort = 0;
-      const listenProxy = async (bindHost: string, upstream: () => number) => {
+      const listenProxy = async (bindHost: string, upstream: () => number, port = 0) => {
         const instance = createHttpsServer(
           { key: readFileSync(keyFile), cert: readFileSync(certFile) },
           (request, response) => {
@@ -332,15 +335,17 @@ test(
         );
         await new Promise<void>((resolveListen, rejectListen) => {
           instance.once("error", rejectListen);
-          instance.listen(0, bindHost, resolveListen);
+          instance.listen(port, bindHost, resolveListen);
         });
         return instance;
       };
       proxy = await listenProxy("127.0.0.1", () => primaryUpstreamPort);
-      secondProxy = await listenProxy(secondHost, () => secondaryUpstreamPort);
       const proxyAddress = proxy.address();
       assert.ok(proxyAddress && typeof proxyAddress === "object");
       const tlsPort = proxyAddress.port;
+      if (process.platform === "darwin")
+        aliasProxy = await listenProxy("::1", () => primaryUpstreamPort, tlsPort);
+      secondProxy = await listenProxy(secondHost, () => secondaryUpstreamPort);
       const secondProxyAddress = secondProxy.address();
       assert.ok(secondProxyAddress && typeof secondProxyAddress === "object");
       const secondTlsPort = secondProxyAddress.port;
@@ -381,6 +386,16 @@ test(
         readFileSync(certFile),
       );
       assert.equal(tlsHealth.status, 401);
+      if (process.platform === "darwin") {
+        const aliasHealth = await proxyResponse(
+          tlsPort,
+          "::1",
+          `localhost:${tlsPort}`,
+          "/health",
+          readFileSync(certFile),
+        );
+        assert.equal(aliasHealth.status, 401);
+      }
       const addPrimary = (await cli(
         pkg,
         ["instance", "add", "primary", "--url", canonical],
@@ -633,6 +648,8 @@ test(
         await stopServer(secondServer.child).catch(() => secondServer?.child.kill("SIGKILL"));
       if (proxy?.listening)
         await new Promise<void>((resolveClose) => proxy!.close(() => resolveClose()));
+      if (aliasProxy?.listening)
+        await new Promise<void>((resolveClose) => aliasProxy!.close(() => resolveClose()));
       if (secondProxy?.listening)
         await new Promise<void>((resolveClose) => secondProxy!.close(() => resolveClose()));
       rmSync(temp, { recursive: true, force: true });
