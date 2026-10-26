@@ -1,6 +1,6 @@
 # Development
 
-Requirements: Node.js 24.2+, pnpm 11.17.0, Chromium.
+Requirements: Node.js 24.20+, pnpm 11.17.0, Chromium.
 
 ```bash
 pnpm install --frozen-lockfile

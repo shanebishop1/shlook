@@ -4,7 +4,7 @@ This guide covers **Cloudflare deployment only**. For the separate private Node.
 [native self-hosting](self-host.md); for profile selection and authentication, see
 [instances](instances.md). Cloudflare's four-origin topology is not a native server recipe.
 
-Required runtime: Node.js 24.2 or later. Install the released CLI with
+Required runtime: Node.js 24.20 or later. Install the released CLI with
 `npm install --global shlook`. In a source checkout, run `pnpm build:cli` and use
 `node ./dist/cli.js`.
 

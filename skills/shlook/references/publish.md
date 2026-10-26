@@ -17,4 +17,4 @@ shlook verify <asset-id> --instance home --json
 
 ## Local-path platform support
 
-Local-path publishing supports macOS and Linux on Node.js 24.2+.
+Local-path publishing supports macOS and Linux on Node.js 24.20+.
