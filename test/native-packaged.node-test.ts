@@ -542,7 +542,7 @@ test(
       await page.locator('input[type="password"]').fill(firstToken);
       await page.getByRole("button", { name: /sign in|log in|login/i }).click();
       await page.waitForURL((url) => url.origin === canonical);
-      await page.getByText("Packaged site").waitFor();
+      await page.locator(".artifact-name", { hasText: "Packaged site" }).waitFor();
       const browserSession = await page.context().cookies(canonical);
       assert.ok(
         browserSession.some(
@@ -565,7 +565,7 @@ test(
       });
       const resumed = await browser.newPage();
       await resumed.goto(`${canonical}/archive`);
-      await resumed.getByText("Packaged site").waitFor();
+      await resumed.locator(".artifact-name", { hasText: "Packaged site" }).waitFor();
 
       const listedTokens = JSON.parse(
         serverCommand(pkg, ["token", "list", "--user", "alice", "--data-dir", data], env),
@@ -610,14 +610,16 @@ test(
       await aliasLogin.goto(`${alias}/login`);
       await aliasLogin.locator('input[type="password"]').fill(aliasToken);
       await aliasLogin.getByRole("button", { name: /sign in|log in|login/i }).click();
-      await aliasLogin.getByText("Packaged site").waitFor();
+      await aliasLogin.locator(".artifact-name", { hasText: "Packaged site" }).waitFor();
       const isolatedHostPage = await browser.newPage();
       await isolatedHostPage.goto(`${secondOrigin}/archive`);
       await isolatedHostPage.waitForURL(/\/login/);
       await cli(pkg, ["delete", assetId, "--instance", "alias"], env);
       await assert.rejects(cli(pkg, ["show", assetId, "--instance", "alias"], env));
       await aliasLogin.goto(`${alias}/archive`);
-      await aliasLogin.getByText("Packaged site").waitFor({ state: "detached" });
+      await aliasLogin
+        .locator(".artifact-name", { hasText: "Packaged site" })
+        .waitFor({ state: "detached" });
       serverCommand(pkg, ["user", "disable", "bob", "--data-dir", data], env);
       await assert.rejects(cli(pkg, ["list", "--instance", "reader"], env));
       serverCommand(pkg, ["user", "disable", "alice", "--data-dir", data], env);

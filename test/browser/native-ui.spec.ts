@@ -11,7 +11,6 @@ import { issueToken } from "../../src/native/admin.ts";
 import { createNativeApplication } from "../../src/native/router.ts";
 import { createNativeUiHandler } from "../../src/native/ui/index.ts";
 import { validateConfig } from "../../src/native/config.ts";
-import { renderSafeMarkdown } from "../../src/markdown.ts";
 
 const listen = (server: HttpServer | HttpsServer) =>
   new Promise<number>((resolve, reject) => {
@@ -24,8 +23,8 @@ const listen = (server: HttpServer | HttpsServer) =>
 const close = (server: HttpServer | HttpsServer) =>
   new Promise<void>((resolve) => server.close(() => resolve()));
 
-test("native UI login, uploads, persistent sessions, revocation, and viewer policy over HTTPS", async () => {
-  test.setTimeout(60_000);
+test("native UI login, uploads, persistent sessions, revocation, and viewer policy over HTTPS", async ({}, testInfo) => {
+  test.setTimeout(120_000);
   const directory = mkdtempSync(join(tmpdir(), "shlook-native-browser-"));
   const certDir = join(directory, "cert");
   mkdirSync(certDir);
@@ -77,9 +76,18 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       },
       (result) => {
         response.writeHead(result.statusCode ?? 500, result.headers);
+        result.on("error", () => response.destroy());
         result.pipe(response);
       },
     );
+    // Restart tests deliberately close the upstream with live preview requests.
+    // Treat their socket resets as proxy failures, not uncaught process errors.
+    forwarded.on("error", () => {
+      if (!response.headersSent) response.writeHead(503);
+      response.end();
+    });
+    request.on("error", () => forwarded.destroy());
+    response.on("close", () => forwarded.destroy());
     request.pipe(forwarded);
   });
   const boot = async () => {
@@ -90,7 +98,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       aliases: [],
       allowLoopbackHttp: false,
     });
-    const ui = createNativeUiHandler();
+    const ui = createNativeUiHandler({ readPage: (offset) => app!.assets.list(offset) });
     app = createNativeApplication({ store, config, ...ui });
     const activeApp = app;
     await new Promise<void>((resolve, reject) =>
@@ -135,7 +143,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       await capPage.goto(`${httpsOrigin}/login`);
       await capPage.locator("#token").fill(shortToken.secret);
       await capPage.getByRole("button", { name: "Sign in" }).click();
-      await expect(capPage.getByRole("heading", { name: "Archive" })).toBeVisible();
+      await expect(capPage.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
       const cappedCookie = (await capContext.cookies(httpsOrigin)).find(
         (cookie) => cookie.name === "__Host-shlook_session",
       )!;
@@ -152,6 +160,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       headless: true,
       ignoreHTTPSErrors: true,
     });
+    context.setDefaultTimeout(10_000);
     let forbiddenImportRequests = 0;
     const unbundledAssetUrls: string[] = [];
     context.on("request", (request) => {
@@ -166,10 +175,15 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     let page: Page = context.pages()[0] ?? (await context.newPage());
     await page.goto(`${httpsOrigin}/archive`);
     await expect(page).toHaveURL(/\/login\?/);
+    await expect(page.locator('input[type="password"]')).toHaveCount(1);
+    await expect(page.getByRole("heading")).toHaveCount(0);
+    await expect(page.locator("body")).toHaveText("Sign in");
+    await expect(page.locator("#token")).toHaveAccessibleName("API token");
+    await page.screenshot({ path: testInfo.outputPath("native-login.png") });
     await page.locator("#token").fill(publisher.secret);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(`${httpsOrigin}/archive`);
-    await expect(page.getByRole("heading", { name: "Archive" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
     const persistentCookie = (await context.cookies(httpsOrigin)).find(
       (cookie) => cookie.name === "__Host-shlook_session",
     )!;
@@ -180,22 +194,32 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     expect(persistentCookie.expires * 1000 - Date.now()).toBeLessThanOrEqual(
       30 * 86400_000 + 5_000,
     );
-    expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
-    const markdownSample = "# Shared renderer\n\n<script>bad()</script>\n\n- safe";
-    expect(
-      await page.evaluate(
-        (source) =>
-          (
-            window as Window & { renderSafeMarkdown?: (value: string) => string }
-          ).renderSafeMarkdown?.(source),
-        markdownSample,
-      ),
-    ).toBe(renderSafeMarkdown(markdownSample));
+    expect(await page.evaluate(() => Object.keys(localStorage))).toEqual(["shlook-theme"]);
+    expect(await page.evaluate(() => localStorage.getItem("shlook-theme"))).toMatch(
+      /^(light|dark)$/,
+    );
+    expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+    const openUpload = async () => {
+      if (await page.locator("[data-upload-dialog]").isVisible()) {
+        await page.locator("[data-upload-close]").click();
+      }
+      await page.locator("[data-upload-open]").click();
+    };
+    const rowFor = (name: string) =>
+      page
+        .locator("[data-record]")
+        .filter({ has: page.locator(".artifact-name", { hasText: new RegExp(`^${name}$`) }) });
+    const inspect = async (name: string) => {
+      const row = rowFor(name);
+      const id = await row.getAttribute("data-record");
+      await row.locator(".row-action [data-inspect]").click();
+      return page.locator(`[data-detail="${id}"]`);
+    };
     const upload = async (
       name: string,
       files: Array<{ name: string; mimeType: string; buffer: Buffer }>,
     ) => {
-      await page.getByLabel("Name", { exact: true }).fill(name);
+      await openUpload();
       const folder = join(directory, `fixture-${name}`);
       mkdirSync(folder);
       for (const file of files) {
@@ -204,20 +228,21 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         writeFileSync(path, file.buffer);
       }
       await page.locator("input[webkitdirectory]").setInputFiles(folder);
-      await page.locator("#upload-status").evaluate((status) => (status.textContent = ""));
-      await page.getByRole("button", { name: "Upload and publish" }).click();
-      await expect(page.locator("#upload-status")).not.toHaveText("");
-      await expect(page.locator("#upload-status")).toHaveText("Published successfully");
+      await page.locator("[data-upload-name]").fill(name);
+      await page.locator("[data-upload-submit]").click();
+      await expect(page.locator("[data-upload-result]")).toBeVisible();
+      await page.locator("[data-upload-close]").click();
+      await page.reload();
     };
     const uploadSingle = async (name: string, fileName: string, buffer: Buffer) => {
-      await page.getByLabel("Name", { exact: true }).fill(name);
+      await openUpload();
       await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles({
         name: fileName,
         mimeType: "application/octet-stream",
         buffer,
       });
-      await page.locator("#upload-status").evaluate((status) => (status.textContent = ""));
-      await page.getByRole("button", { name: "Upload and publish" }).click();
+      await page.locator("[data-upload-name]").fill(name);
+      await page.locator("[data-upload-submit]").click();
     };
     await upload("bundle", [
       {
@@ -262,7 +287,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       "single.md",
       Buffer.from('# Single note\n\n<img src="https://bad.invalid/x">'),
     );
-    await expect(page.locator("#upload-status")).toHaveText("Published successfully");
+    await expect(page.locator("[data-upload-result]")).toBeVisible();
     const singleMarkdown = store!.db
       .prepare(
         "SELECT path,object_key AS objectKey FROM asset_files f JOIN assets a ON a.id=f.asset_id WHERE a.name=?",
@@ -292,27 +317,88 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         "base64",
       ),
     );
-    await page
-      .locator('article:has(h2:text("standalone-pixel"))')
-      .getByRole("button", { name: "Preview" })
-      .click();
-    await expect(page.frameLocator("#preview").locator("img")).toBeVisible();
+    await expect(page.locator("[data-upload-result]")).toBeVisible();
+    await page.locator("[data-upload-close]").click();
+    await page.reload();
+    const pixelPanel = await inspect("standalone-pixel");
+    await expect(pixelPanel.frameLocator("iframe").locator("img")).toBeVisible();
     await expect
       .poll(() =>
-        page
-          .frameLocator("#preview")
+        pixelPanel
+          .frameLocator("iframe")
           .locator("img")
           .evaluate((image: HTMLImageElement) => image.naturalWidth),
       )
       .toBe(1);
-    await page.getByRole("button", { name: "Close" }).click();
-    await expect(page.locator("#preview")).not.toHaveAttribute("src", /.+/);
-    await expect(page.getByText("bundle", { exact: true })).toBeVisible();
+    await rowFor("standalone-pixel").locator(".row-action [data-inspect]").click();
+    await expect(pixelPanel.locator("iframe")).not.toHaveAttribute("src", /.+/);
+    await expect(rowFor("bundle")).toBeVisible();
     const bundleId = await page.evaluate(async () => {
       const assets = await (await fetch("/api/assets")).json();
       return assets.assets.find((asset: { name: string }) => asset.name === "bundle").id as string;
     });
     const nestedPath = "fixture-bundle/nested/child.html";
+    // A shared deep link must recover through login without sending browser
+    // users to a JSON error or discarding the requested path and query.
+    const freshContext = await context.browser()!.newContext({ ignoreHTTPSErrors: true });
+    try {
+      const deepLink = `${httpsOrigin}/assets/${bundleId}/${nestedPath}?from=shared%20link&view=1`;
+      const freshPage = await freshContext.newPage();
+      await freshPage.goto(deepLink);
+      await expect(freshPage).toHaveURL(/\/login\?/);
+      expect(new URL(freshPage.url()).searchParams.get("return")).toBe(
+        new URL(deepLink).pathname + new URL(deepLink).search,
+      );
+      await expect(freshPage.getByRole("heading")).toHaveCount(0);
+      await expect(freshPage.locator("body")).toHaveText("Sign in");
+      await freshPage.locator("#token").fill(publisher.secret);
+      await freshPage.getByRole("button", { name: "Sign in", exact: true }).click();
+      await expect(freshPage).toHaveURL(deepLink);
+      await expect(freshPage.getByRole("heading", { name: "nested-active" })).toBeVisible();
+      expect(freshPage.url()).not.toContain(publisher.secret);
+      await freshContext.clearCookies();
+      const cliResponse = await freshContext.request.get(deepLink, { maxRedirects: 0 });
+      expect(cliResponse.status()).toBe(401);
+      expect(cliResponse.headers().location).toBeUndefined();
+      const apiResponse = await freshPage.goto(`${httpsOrigin}/api/me`);
+      // This navigation originates in an opaque sandboxed artifact, so the
+      // existing Fetch Metadata boundary denies it before authentication.
+      expect(apiResponse!.status()).toBe(403);
+      expect((await freshContext.request.get(`${httpsOrigin}/api/me`)).status()).toBe(401);
+      await freshPage.goto(
+        `${httpsOrigin}/login?return=${encodeURIComponent("//example.invalid/")}`,
+      );
+      await freshPage.locator("#token").fill(publisher.secret);
+      await freshPage.getByRole("button", { name: "Sign in", exact: true }).click();
+      await expect(freshPage).toHaveURL(`${httpsOrigin}/`);
+      await expect(freshPage.locator(".masthead .wordmark")).toHaveText("shlook");
+      await expect(freshPage.locator(".ledger")).toBeVisible();
+      await expect(freshPage.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
+      await expect(freshPage.locator("[data-visibility-menu]")).toHaveCount(0);
+      await expect(freshPage.locator("[data-secret]")).toHaveCount(0);
+      await freshPage.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+      if ((await freshPage.locator("html").getAttribute("data-theme")) !== "dark") {
+        await freshPage.locator("[data-theme-toggle]").click();
+      }
+      await freshPage.setViewportSize({ width: 1440, height: 1000 });
+      await freshPage.screenshot({
+        path: testInfo.outputPath("native-archive-desktop.png"),
+        fullPage: true,
+      });
+      await freshPage.setViewportSize({ width: 390, height: 844 });
+      expect(
+        await freshPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      ).toBe(true);
+      await freshPage.screenshot({
+        path: testInfo.outputPath("native-archive-mobile.png"),
+        fullPage: true,
+      });
+      await freshContext.clearCookies();
+      await freshPage.getByRole("button", { name: "Log out", exact: true }).click();
+      await expect(freshPage).toHaveURL(/\/login\?return=%2F$/);
+    } finally {
+      await freshContext.close();
+    }
     const assertArtifactHeaders = (headers: Record<string, string>) => {
       expect(headers["content-security-policy"]).toContain("sandbox allow-scripts");
       expect(headers["content-security-policy"]).not.toContain("allow-same-origin");
@@ -350,15 +436,18 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     );
     expect(previewNested.status()).toBe(200);
     assertArtifactHeaders(previewNested.headers());
-    await page.locator("#preview").evaluate(
-      (frame: HTMLIFrameElement, src) => {
-        frame.setAttribute("src", src);
-        frame.closest("#viewer")!.removeAttribute("hidden");
+    await page.evaluate(
+      (src) => {
+        const frame = document.createElement("iframe");
+        frame.id = "security-probe";
+        frame.setAttribute("sandbox", "allow-scripts");
+        frame.src = src;
+        document.body.append(frame);
       },
       `/preview/assets/${bundleId}/${nestedPath.split("/").map(encodeURIComponent).join("/")}`,
     );
     await expect(
-      page.frameLocator("#preview").getByRole("heading", { name: "nested-active" }),
+      page.frameLocator("#security-probe").getByRole("heading", { name: "nested-active" }),
     ).toBeVisible();
     expect(await page.locator("body").getAttribute("data-pwned")).toBeNull();
     expect(await page.evaluate(() => localStorage.getItem("pwned"))).toBeNull();
@@ -415,7 +504,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     expect(forbiddenImportRequests).toBe(0);
     expect(unbundledAssetUrls).toEqual([]);
     await attackPage.close();
-    await page.getByRole("button", { name: "Close" }).click();
+    await page.locator("#security-probe").evaluate((frame) => frame.remove());
     const externalPage = await context.newPage();
     await externalPage.goto(`https://localhost:${externalPort}/`);
     const foreignFrameResponse = externalPage.waitForResponse(
@@ -480,7 +569,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     await externalPage.close();
     await page.goto(`https://localhost:${externalPort}/`);
     await page.getByRole("link", { name: "Open private archive" }).click();
-    await expect(page.getByRole("heading", { name: "Archive" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
     await expect(page).toHaveURL(`${httpsOrigin}/archive`);
     await upload("attack", [
       {
@@ -491,23 +580,17 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         ),
       },
     ]);
-    await page
-      .locator('article:has(h2:text("attack"))')
-      .getByRole("button", { name: "Preview" })
-      .click();
+    const attackPanel = await inspect("attack");
     await expect(
-      page.frameLocator("iframe").getByRole("heading", { name: "contained" }),
+      attackPanel.frameLocator("iframe").getByRole("heading", { name: "contained" }),
     ).toBeVisible();
     expect(await page.locator("body").getAttribute("data-pwned")).toBeNull();
     expect(await page.evaluate(() => localStorage.getItem("pwned"))).toBeNull();
-    await page.getByRole("button", { name: "Close" }).click();
-    await expect(page.locator("#preview")).toHaveCount(1);
-    const previewButton = page
-      .locator('article:has(h2:text("bundle"))')
-      .getByRole("button", { name: "Preview" });
-    await previewButton.click();
-    await expect(page.locator("#preview")).toHaveAttribute("src", /preview/);
-    const artifact = page.frameLocator("iframe");
+    await rowFor("attack").locator(".row-action [data-inspect]").click();
+    await expect(attackPanel.locator("iframe")).not.toHaveAttribute("src", /.+/);
+    const bundlePanel = await inspect("bundle");
+    await expect(bundlePanel.locator("iframe")).toHaveAttribute("src", /preview/);
+    const artifact = bundlePanel.frameLocator("iframe");
     await expect(artifact.getByRole("heading", { name: "bundle-ok" })).toBeVisible();
     await expect.poll(() => artifact.locator("body").getAttribute("data-js")).toBe("ok");
     await expect
@@ -520,7 +603,44 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         .getByRole("heading", { name: "bundle-ok" })
         .evaluate((heading) => getComputedStyle(heading).color),
     ).toBe("rgb(1, 2, 3)");
-    expect(await page.locator("iframe").getAttribute("sandbox")).toBe("allow-scripts");
+    expect(await bundlePanel.locator("iframe").getAttribute("sandbox")).toBe("allow-scripts");
+    await rowFor("bundle").locator(".row-action [data-inspect]").click();
+    await page.locator("input[data-search]").fill("single-notes");
+    await expect(rowFor("single-notes")).toBeVisible();
+    await expect(rowFor("bundle")).toBeHidden();
+    await page.locator("input[data-search]").fill("");
+    const previousTheme = await page.locator("html").getAttribute("data-theme");
+    await page.locator("[data-theme-toggle]").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-theme",
+      previousTheme === "dark" ? "light" : "dark",
+    );
+    const notesPanel = await inspect("single-notes");
+    await notesPanel.locator("[data-hard-expiry]").fill("2030-01-02T03:04");
+    await notesPanel.locator("[data-expiry]").click();
+    await Promise.all([
+      page.waitForEvent("load"),
+      page.locator("[data-action-confirm-submit]").click(),
+    ]);
+    await expect
+      .poll(
+        () =>
+          (
+            store!.db
+              .prepare("SELECT hard_expires_at AS expiry FROM assets WHERE name='single-notes'")
+              .get() as { expiry: string | null }
+          ).expiry,
+      )
+      .not.toBeNull();
+    await inspect("single-notes");
+    await notesPanel.locator("[data-request-delete]").click();
+    await page.locator("[data-confirm]:not([hidden]) [data-delete]").click();
+    await expect(rowFor("single-notes")).toHaveCount(0);
+    await page.locator("[data-select-toggle]").click();
+    await rowFor("standalone-pixel").locator("[data-select-item]").check();
+    await page.locator("[data-batch-delete]").click();
+    await page.locator("[data-action-confirm-submit]").click();
+    await expect(rowFor("standalone-pixel")).toHaveCount(0);
     await context.close();
     context = await chromium.launchPersistentContext(profile, {
       headless: true,
@@ -528,18 +648,18 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     });
     page = context.pages()[0] ?? (await context.newPage());
     await page.goto(`${httpsOrigin}/archive`);
-    await expect(page.getByRole("heading", { name: "Archive" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
     await stopApp();
     await boot();
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Archive" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
     await page.getByRole("button", { name: "Log out" }).click();
     await expect(page).toHaveURL(/\/login/);
     await page.locator("#token").fill(viewer.secret);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Archive" })).toBeVisible();
-    await expect(page.locator("#upload-panel")).toBeHidden();
-    expect(await page.getByRole("button", { name: "Delete" }).count()).toBe(0);
+    await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
+    await expect(page.locator("[data-upload-open]")).toHaveCount(0);
+    await expect(page.locator("[data-request-delete]")).toHaveCount(0);
     const cookieValue = (await context.cookies(httpsOrigin)).find(
       (cookie) => cookie.name === "__Host-shlook_session",
     )!.value;
