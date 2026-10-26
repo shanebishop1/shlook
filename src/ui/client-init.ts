@@ -9,7 +9,9 @@ batchDelete?.addEventListener('click', async () => {
   openActionConfirmation('Delete ' + items.length + ' selected ' + (items.length === 1 ? 'artifact' : 'artifacts') + '?', 'These artifacts and their files will be removed permanently.', async () => {
     batchDelete.disabled = true;
     try {
-      await Promise.all(items.map((item) => ownerRequest('/api/assets/' + item.closest('[data-record]').dataset.record, { method: 'DELETE' })));
+      const results = await Promise.allSettled(items.map((item) => ownerRequest('/api/assets/' + item.closest('[data-record]').dataset.record, { method: 'DELETE' })));
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed) throw failed.reason;
       location.reload();
     } catch (error) {
       setStatus(null, error instanceof Error ? error.message : 'Batch delete failed.', true);

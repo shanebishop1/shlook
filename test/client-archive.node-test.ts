@@ -615,6 +615,49 @@ test("batch confirmation action remains busy after the dialog closes and defers 
   }
 });
 
+test("mixed-outcome batch deletion defers refresh until every request has settled", async () => {
+  const fixture = passiveFixture({
+    rows:
+      artifactMarkup("initial", shareExpiry, hardExpiry) +
+      artifactMarkup("second", shareExpiry, hardExpiry),
+  });
+  try {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    fixture.handler((path) =>
+      path === "/api/assets/initial"
+        ? first.promise
+        : path === "/api/assets/second"
+          ? second.promise
+          : Promise.resolve(
+              new Response(archivePage(artifactMarkup("fresh", shareExpiry, hardExpiry))),
+            ),
+    );
+    const document = fixture.window.document;
+    document.querySelector<HTMLElement>("[data-select-toggle]")!.click();
+    document.querySelectorAll<HTMLInputElement>("[data-select-item]").forEach((item) => {
+      item.checked = true;
+      item.dispatchEvent(new fixture.window.Event("change", { bubbles: true }));
+    });
+    document.querySelector<HTMLElement>("[data-batch-delete]")!.click();
+    document.querySelector<HTMLElement>("[data-action-confirm-submit]")!.click();
+    await settle();
+    assert.equal(fixture.calls.length, 2);
+    fixture.clock.advance(120000);
+    first.resolve(new Response(JSON.stringify({ error: "failed" }), { status: 500 }));
+    await settle();
+    assert.equal(fixture.calls.length, 2, "a failed sibling must not release the batch operation");
+    assert.equal(document.querySelector('[data-record="fresh"]'), null);
+    second.resolve(Response.json({}));
+    await settle();
+    assert.equal(fixture.calls.length, 3);
+    assert.ok(document.querySelector('[data-record="fresh"]'));
+    assert.match(document.querySelector("[data-toast]")!.textContent!, /failed/i);
+  } finally {
+    fixture.close();
+  }
+});
+
 test("a mutation that begins and ends before the old response arrives still prevents stale redirects", async () => {
   const fixture = passiveFixture();
   try {
