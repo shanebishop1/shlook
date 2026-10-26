@@ -8,5 +8,6 @@
     "types": ["node", "@playwright/test", "@cloudflare/workers-types"],
     "allowImportingTsExtensions": true
   },
-  "include": ["playwright.config.ts", "test/browser/**/*.ts"]
+  "include": ["playwright.config.ts", "test/browser/**/*.ts"],
+  "exclude": ["test/browser/native-ui.spec.ts"]
 }

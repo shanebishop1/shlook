@@ -54,7 +54,7 @@
     "test:package": "node --test test/native-packaged.node-test.ts",
     "test:browser": "playwright test",
     "typecheck": "pnpm typecheck:worker && pnpm typecheck:cli && pnpm typecheck:browser && pnpm typecheck:server",
-    "typecheck:browser": "tsc --project tsconfig.browser.json",
+    "typecheck:browser": "tsc --project tsconfig.browser.json && tsc --project tsconfig.browser-native-ui.json",
     "typecheck:cli": "tsc --project tsconfig.cli.json",
     "typecheck:worker": "tsc --project tsconfig.worker.json",
     "typecheck:server": "tsc --project tsconfig.server.json --noEmit"
