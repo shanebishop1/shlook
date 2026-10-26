@@ -439,6 +439,29 @@ test(
         env,
       )) as { asset?: { id: string } };
       assert.ok(markdown.asset?.id);
+      const rasterFile = join(temp, "standalone.png");
+      writeFileSync(
+        rasterFile,
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5Z8AAAAASUVORK5CYII=",
+          "base64",
+        ),
+      );
+      const raster = (await cli(
+        pkg,
+        ["publish", rasterFile, "--name", "Standalone raster", "--instance", "primary"],
+        env,
+      )) as { asset?: { id: string }; url?: string };
+      assert.ok(raster.asset?.id);
+      assert.match(raster.url ?? "", new RegExp(`^${canonical}/assets/`));
+      const rasterVerification = (await cli(
+        pkg,
+        ["verify", raster.asset.id, "--instance", "primary"],
+        env,
+      )) as { assetId?: string; verified?: boolean; status?: number };
+      assert.equal(rasterVerification.assetId, raster.asset.id);
+      assert.equal(rasterVerification.verified, true);
+      assert.equal(rasterVerification.status, 200);
       const aliasMarkdown = (await cli(
         pkg,
         ["publish", join(publishDir, "notes.md"), "--name", "Alias notes", "--instance", "alias"],
@@ -460,9 +483,13 @@ test(
         "viewer reads shared publications",
       );
       const verify = (await cli(pkg, ["verify", assetId, "--instance", "primary"], env)) as {
-        ok?: boolean;
+        assetId?: string;
+        verified?: boolean;
+        status?: number;
       };
-      assert.equal(verify.ok, true);
+      assert.equal(verify.assetId, assetId);
+      assert.equal(verify.verified, true);
+      assert.equal(verify.status, 200);
       await assert.rejects(
         cli(pkg, ["visibility", assetId, "public", "--instance", "primary"], env),
       );
@@ -522,8 +549,6 @@ test(
       const resumed = await browser.newPage();
       await resumed.goto(`${canonical}/archive`);
       await resumed.getByText("Packaged site").waitFor();
-      await browser.close();
-      browser = undefined;
 
       const listedTokens = JSON.parse(
         serverCommand(pkg, ["token", "list", "--user", "alice", "--data-dir", data], env),
@@ -537,20 +562,8 @@ test(
         ((await cli(pkg, ["list", "--instance", "alias"], env)) as { assets?: unknown[] }).assets
           ?.length,
       );
-      browser = await chromium.launchPersistentContext(browserProfile, {
-        headless: true,
-        ignoreHTTPSErrors: true,
-      });
-      const revokedPage = await browser.newPage();
-      await revokedPage.goto(`${canonical}/archive`);
-      await revokedPage.waitForURL(/\/login/);
-      await browser.close();
-      browser = undefined;
-
-      serverCommand(pkg, ["user", "disable", "bob", "--data-dir", data], env);
-      await assert.rejects(cli(pkg, ["list", "--instance", "reader"], env));
-      await cli(pkg, ["delete", assetId, "--instance", "alias"], env);
-      await assert.rejects(cli(pkg, ["show", assetId, "--instance", "alias"], env));
+      await resumed.goto(`${canonical}/archive`);
+      await resumed.waitForURL(/\/login/);
 
       const data2 = join(temp, "data-2");
       serverCommand(pkg, ["init", "--data-dir", data2, "--origin", secondOrigin], env);
@@ -566,6 +579,8 @@ test(
       await cli(pkg, ["instance", "add", "other", "--url", secondOrigin], env);
       const otherToken = readFileSync(token2File, "utf8").trim();
       await cli(pkg, ["connect", "--instance", "other"], env, `${otherToken}\n`);
+      const invalidCredentialEnv = { ...env, SHLOOK_API_TOKEN_OTHER: aliasToken };
+      await assert.rejects(cli(pkg, ["list", "--instance", "other"], invalidCredentialEnv));
       const secondList = (await cli(pkg, ["list", "--instance", "other"], env)) as {
         assets?: unknown[];
       };
@@ -586,6 +601,17 @@ test(
       const isolatedHostPage = await browser.newPage();
       await isolatedHostPage.goto(`${secondOrigin}/archive`);
       await isolatedHostPage.waitForURL(/\/login/);
+      await cli(pkg, ["delete", assetId, "--instance", "alias"], env);
+      await assert.rejects(cli(pkg, ["show", assetId, "--instance", "alias"], env));
+      await aliasLogin.goto(`${alias}/archive`);
+      await aliasLogin.getByText("Packaged site").waitFor({ state: "detached" });
+      serverCommand(pkg, ["user", "disable", "bob", "--data-dir", data], env);
+      await assert.rejects(cli(pkg, ["list", "--instance", "reader"], env));
+      serverCommand(pkg, ["user", "disable", "alice", "--data-dir", data], env);
+      await assert.rejects(cli(pkg, ["list", "--instance", "primary"], env));
+      await assert.rejects(cli(pkg, ["list", "--instance", "alias"], env));
+      await aliasLogin.goto(`${alias}/archive`);
+      await aliasLogin.waitForURL(/\/login/);
       await browser.close();
       browser = undefined;
       const isolated = await proxyResponse(
