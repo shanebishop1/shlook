@@ -64,9 +64,6 @@ Also verify routing and delivery boundaries:
 
 ## Troubleshooting
 
-If publishing reports no verified descriptor filesystem, stop; do not bypass the guard.
-See [platform limits](publish.md#local-path-platform-support).
-
 1. Run `shlook auth check --json`. If using an environment profile, check its variables without
    printing secrets; otherwise check `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/auth.json` and its
    parent directory permissions.

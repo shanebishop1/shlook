@@ -20,7 +20,8 @@ import test from "node:test";
 import { chromium } from "@playwright/test";
 
 const repo = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const linuxDescriptorInput = process.platform === "linux" && existsSync("/proc/self/fd");
+const secondHost = process.platform === "darwin" ? "::1" : "127.0.0.2";
+const secondAuthority = secondHost.includes(":") ? `[${secondHost}]` : secondHost;
 
 function run(
   command: string,
@@ -205,7 +206,7 @@ function proxyResponse(port: number, connectHost: string, host: string, path: st
 test(
   "packed production bins operate independently of the checkout",
   {
-    skip: !linuxDescriptorInput && "publication input smoke requires verified Linux /proc/self/fd",
+    timeout: 180_000,
   },
   async (t) => {
     const temp = mkdtempSync(join(tmpdir(), "shlook-packed-native-"));
@@ -274,7 +275,7 @@ test(
           "CN=localhost",
           "",
           "[ext]",
-          "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:127.0.0.2",
+          "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:127.0.0.2,IP:::1",
           "basicConstraints=critical,CA:TRUE",
           "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign",
           "",
@@ -335,7 +336,7 @@ test(
         return instance;
       };
       proxy = await listenProxy("127.0.0.1", () => primaryUpstreamPort);
-      secondProxy = await listenProxy("127.0.0.2", () => secondaryUpstreamPort);
+      secondProxy = await listenProxy(secondHost, () => secondaryUpstreamPort);
       const proxyAddress = proxy.address();
       assert.ok(proxyAddress && typeof proxyAddress === "object");
       const tlsPort = proxyAddress.port;
@@ -344,7 +345,7 @@ test(
       const secondTlsPort = secondProxyAddress.port;
       const canonical = `https://127.0.0.1:${tlsPort}`;
       const alias = `https://localhost:${tlsPort}`;
-      const secondOrigin = `https://127.0.0.2:${secondTlsPort}`;
+      const secondOrigin = `https://${secondAuthority}:${secondTlsPort}`;
 
       serverCommand(
         pkg,
@@ -612,8 +613,8 @@ test(
       browser = undefined;
       const isolated = await proxyResponse(
         secondTlsPort,
-        "127.0.0.2",
-        `127.0.0.2:${secondTlsPort}`,
+        secondHost,
+        `${secondAuthority}:${secondTlsPort}`,
         "/api/assets",
         readFileSync(certFile),
       );

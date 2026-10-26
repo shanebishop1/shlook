@@ -17,6 +17,4 @@ shlook verify <asset-id> --instance home --json
 
 ## Local-path platform support
 
-Local-path publishing requires descriptor-relative filesystem access. Verified on Linux/arm64,
-Node 24; currently fails closed on macOS. This affects both backends, not browser uploads or
-profile commands. Do not bypass the file-safety guard.
+Local-path publishing supports macOS and Linux on Node.js 24+.

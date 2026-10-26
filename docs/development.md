@@ -10,4 +10,4 @@ pnpm run ci
 ```
 
 Use temporary server data and credentials. Native browser tests require HTTPS; loopback HTTP is
-CLI-only. See [publication platform limits](../skills/shlook/references/publish.md#local-path-platform-support).
+CLI-only. See [supported platforms](../skills/shlook/references/publish.md#local-path-platform-support).
