@@ -131,7 +131,7 @@ export async function run(args: string[]): Promise<void> {
     try {
       // Browser handlers are only needed by the long-running HTTP service.
       const ui = await import("./ui/index.js");
-      const handlers = ui.createNativeUiHandler();
+      const handlers = ui.createNativeUiHandler({ readPage: (offset) => app!.assets.list(offset) });
       app = createNativeApplication({
         store,
         config,
