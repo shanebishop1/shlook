@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  koffi: false
   workerd: true
 minimumReleaseAgeExclude:
   - "@cloudflare/vitest-plugin@1.1.0"

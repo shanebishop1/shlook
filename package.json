@@ -60,6 +60,7 @@
     "typecheck:server": "tsc --project tsconfig.server.json --noEmit"
   },
   "dependencies": {
+    "koffi": "3.3.4",
     "parse5": "8.0.1",
     "postcss": "8.5.26",
     "postcss-value-parser": "4.2.0",

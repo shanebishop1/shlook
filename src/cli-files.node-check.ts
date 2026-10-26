@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import { loadPublishInput } from "./cli-files.ts";
-import { maxPublicationBytes, maxUploadBytes } from "./upload-limits.ts";
+import { publishFilesystem } from "./cli-filesystem.ts";
+import type { InputHandle } from "./cli-filesystem.ts";
+import { maxPublicationBytes, maxUploadBytes, maxUploadFiles } from "./upload-limits.ts";
 import { renderSafeMarkdown } from "./markdown.ts";
 
 const temporaryDirectories: string[] = [];
@@ -134,4 +137,176 @@ test("rejects symlinked input paths and children without following them", async 
   await mkdir(root);
   await symlink(outside, join(root, "escape"));
   await assert.rejects(loadPublishInput(root), /ELOOP|symlink|publish input/i);
+});
+
+test("loads single HTML and raster files, including the trusted macOS /var alias", async () => {
+  const directory = await temporaryDirectory();
+  for (const [name, contentType] of [
+    ["index.html", "text/html; charset=utf-8"],
+    ["image.png", "image/png"],
+  ]) {
+    const path = join(directory, name);
+    const bytes = new Uint8Array([0, 1, 127, 255]);
+    await writeFile(path, bytes);
+    const input = process.platform === "darwin" ? path.replace(/^\/private\/var\//, "/var/") : path;
+    const loaded = await loadPublishInput(input);
+    assert.deepEqual(loaded, { entrypoint: name, files: [{ path: name, bytes, contentType }] });
+  }
+});
+
+test("rejects NUL input components instead of truncating native C paths", async () => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, "index.html");
+  await writeFile(path, "must not be published");
+  await assert.rejects(loadPublishInput(`${path}\0ignored.html`), /unsafe path component/);
+});
+
+test(
+  "rejects FIFOs without waiting for a writer and rejects device input",
+  { timeout: 5000 },
+  async () => {
+    const directory = await temporaryDirectory();
+    const fifo = join(directory, "index.html");
+    execFileSync("mkfifo", [fifo]);
+    await assert.rejects(loadPublishInput(fifo), /regular file/);
+    await assert.rejects(loadPublishInput(directory), /non-regular file/);
+    await assert.rejects(loadPublishInput("/dev/null"), /regular file/);
+  },
+);
+
+test("rejects unsafe logical names and too many files", async () => {
+  const directory = await temporaryDirectory();
+  const unsafe = join(directory, "bad\\name.html");
+  await writeFile(unsafe, "not allowed");
+  await assert.rejects(loadPublishInput(directory), /unsafe path/);
+  await rm(unsafe);
+  for (let index = 0; index <= maxUploadFiles; index += 1) {
+    await writeFile(join(directory, `${index}.html`), "");
+  }
+  await assert.rejects(
+    loadPublishInput(directory, "0.html"),
+    new RegExp(`exceeds ${maxUploadFiles} files`),
+  );
+});
+
+// These intercept the filesystem boundary to schedule real mutations precisely;
+// all opens, descriptor metadata, directory reads and byte reads still execute.
+test("rejects a child replaced with a symlink after descriptor enumeration", async (t) => {
+  const directory = await temporaryDirectory();
+  const outside = await temporaryDirectory();
+  await writeFile(join(directory, "index.html"), "original");
+  await writeFile(join(outside, "secret.html"), "outside secret");
+  const entries = publishFilesystem.entries;
+  let swapped = false;
+  t.mock.method(publishFilesystem, "entries", async (handle: InputHandle) => {
+    const names = await entries(handle);
+    await rm(join(directory, "index.html"));
+    await symlink(join(outside, "secret.html"), join(directory, "index.html"));
+    swapped = true;
+    return names;
+  });
+  await assert.rejects(loadPublishInput(directory), /ELOOP/);
+  assert.equal(swapped, true);
+});
+
+test("never traverses a replacement pathname after the held directory is moved", async (t) => {
+  const directory = await temporaryDirectory();
+  const outside = await temporaryDirectory();
+  const root = join(directory, "input");
+  await mkdir(root);
+  await writeFile(join(root, "index.html"), "original");
+  await writeFile(join(outside, "index.html"), "outside secret");
+  const entries = publishFilesystem.entries;
+  let swapped = false;
+  t.mock.method(publishFilesystem, "entries", async (handle: InputHandle) => {
+    const names = await entries(handle);
+    await rename(root, join(directory, "moved"));
+    await symlink(outside, root);
+    swapped = true;
+    return names;
+  });
+  await assert.rejects(loadPublishInput(root), /escaped its descriptor root/);
+  assert.equal(swapped, true);
+});
+
+test("reads held file bytes, not a symlink substituted after open", async (t) => {
+  const directory = await temporaryDirectory();
+  const outside = await temporaryDirectory();
+  const path = join(directory, "index.html");
+  await writeFile(path, "original");
+  await writeFile(join(outside, "secret.html"), "outside secret");
+  const openChild = publishFilesystem.openChild;
+  let swapped = false;
+  t.mock.method(publishFilesystem, "openChild", async (parent: InputHandle, name: string) => {
+    const handle = await openChild(parent, name);
+    if (name === "index.html") {
+      await rename(path, join(directory, "held.html"));
+      await symlink(join(outside, "secret.html"), path);
+      swapped = true;
+    }
+    return handle;
+  });
+  const loaded = await loadPublishInput(directory);
+  assert.equal(swapped, true);
+  assert.deepEqual(
+    loaded.files.map((file) => new TextDecoder().decode(file.bytes)),
+    ["original"],
+  );
+});
+
+test("rejects size changes on held files and closes every acquired descriptor", async (t) => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, "index.html");
+  await writeFile(path, "original");
+  const acquired: { handle: InputHandle; closed: boolean }[] = [];
+  const openChild = publishFilesystem.openChild;
+  t.mock.method(publishFilesystem, "openChild", async (parent: InputHandle, name: string) => {
+    const handle = await openChild(parent, name);
+    const record = { handle, closed: false };
+    acquired.push(record);
+    const close = handle.close.bind(handle);
+    t.mock.method(handle, "close", async () => {
+      await close();
+      record.closed = true;
+    });
+    if (name === "index.html") {
+      const read = handle.read.bind(handle);
+      t.mock.method(handle, "read", async (...args: Parameters<InputHandle["read"]>) => {
+        await writeFile(path, "changed size");
+        return read(...args);
+      });
+    }
+    return handle;
+  });
+  await assert.rejects(loadPublishInput(directory), /changed while being read/);
+  assert.ok(acquired.length > 1);
+  assert.ok(acquired.every((record) => record.closed));
+});
+
+test("closes retained candidates when later enumeration fails", async (t) => {
+  const directory = await temporaryDirectory();
+  await writeFile(join(directory, "index.html"), "original");
+  const openChild = publishFilesystem.openChild;
+  const entries = publishFilesystem.entries;
+  let candidate: InputHandle | undefined;
+  let closed = false;
+  t.mock.method(publishFilesystem, "entries", async (handle: InputHandle) => [
+    ...(await entries(handle)),
+    "missing.html",
+  ]);
+  t.mock.method(publishFilesystem, "openChild", async (parent: InputHandle, name: string) => {
+    const handle = await openChild(parent, name);
+    if (name === "index.html") {
+      candidate = handle;
+      const close = handle.close.bind(handle);
+      t.mock.method(handle, "close", async () => {
+        await close();
+        closed = true;
+      });
+    }
+    return handle;
+  });
+  await assert.rejects(loadPublishInput(directory), /ENOENT/);
+  assert.ok(candidate);
+  assert.equal(closed, true);
 });
