@@ -3,6 +3,20 @@ import { origin, origins } from "./origins.ts";
 import type { CliDependencies } from "./types.ts";
 
 function ownerHeaders(dependencies: CliDependencies): Headers {
+  if (dependencies.backend === "native") {
+    const name = dependencies.instanceName ?? "default";
+    const envName =
+      dependencies.profileTokenEnv ?? `SHLOOK_API_TOKEN_${name.replaceAll("-", "_").toUpperCase()}`;
+    const token = dependencies.env[envName];
+    if (token === undefined)
+      throw new CliError(
+        "auth_required",
+        `authentication required for instance ${name}; set ${envName} or run connect --instance ${name}`,
+      );
+    if (!/^shlook_api_v1_[A-Za-z0-9_-]{43}$/.test(token))
+      throw new CliError("invalid_credential", "configured credential is invalid");
+    return new Headers({ Authorization: `Bearer ${token}` });
+  }
   const id = dependencies.env.CF_ACCESS_CLIENT_ID;
   const secret = dependencies.env.CF_ACCESS_CLIENT_SECRET;
   if (id === undefined || secret === undefined) {
@@ -24,8 +38,41 @@ export async function authenticatedFetch(
   init: RequestInit = {},
 ): Promise<Response> {
   const headers = new Headers(init.headers);
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    throw new CliError("invalid_configuration", "request URL is invalid");
+  }
+  if (
+    dependencies.backend === "native" &&
+    dependencies.selectedOrigin !== undefined &&
+    target.origin !== dependencies.selectedOrigin
+  ) {
+    throw new CliError("invalid_configuration", "request origin is not allowed");
+  }
+  if (dependencies.backend !== "native" && dependencies.selectedOrigin !== undefined) {
+    const allowed = new Set(
+      [
+        dependencies.selectedOrigin,
+        dependencies.env.SHLOOK_PRIVATE_ORIGIN,
+        dependencies.env.SHLOOK_PUBLIC_ORIGIN,
+        dependencies.env.SHLOOK_SHARE_ORIGIN,
+      ]
+        .filter((value): value is string => value !== undefined)
+        .map((value) => {
+          try {
+            return new URL(value).origin;
+          } catch {
+            return "";
+          }
+        }),
+    );
+    if (!allowed.has(target.origin))
+      throw new CliError("invalid_configuration", "request origin is not allowed");
+  }
   ownerHeaders(dependencies).forEach((value, name) => headers.set(name, value));
-  const response = await dependencies.fetch(url, {
+  const response = await dependencies.fetch(target.href, {
     ...init,
     headers,
     redirect: "manual",

@@ -1,5 +1,11 @@
 # Verification
 
+For native, run `auth check` and `verify` with `--instance <name>`. From an intended HTTPS client,
+check upload/viewing, read-only viewer permissions, browser/server restart persistence, and token
+revocation invalidating its sessions. Separate data directories must not share data or credentials.
+
+## Cloudflare
+
 Before testing, confirm that the resolved owner, private, public, and share addresses are four
 distinct, pathless HTTPS origins. They may come from a stored connection, `SHLOOK_DOMAIN`, or the
 four explicit origin variables. Confirm that R2 has no public `r2.dev` URL/custom domain and that
@@ -56,18 +62,17 @@ Also verify routing and delivery boundaries:
 6. Any unused `workers.dev` and preview URLs are disabled; in no-domain mode, Access is enabled
    directly on the owner/private production `workers.dev` routes.
 
-Troubleshooting order:
+## Troubleshooting
 
 1. Run `shlook auth check --json`. If using an environment profile, check its variables without
    printing secrets; otherwise check `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/auth.json` and its
    parent directory permissions.
-2. `shlook auth check --json`
-3. `shlook status --json`
-4. `shlook show <asset-id> --json`
-5. For setup failures, inspect the generated
+2. `shlook status --json`
+3. `shlook show <asset-id> --json`
+4. For setup failures, inspect the generated
    `${XDG_CONFIG_HOME:-$HOME/.config}/shlook/deployment/wrangler.json`, ownership manifest,
    pending-service-token path, and retained encryption-key path without printing file contents,
    then rerun `setup --plan` and report its structured capabilities, blocked actions, or error.
    A plan that is not ready is not successful setup. Apply renews and rotates a manifest-owned
    service token within seven days of expiry; an expired or unowned token remains a conflict.
-6. Re-run `verify` and report the exact structured error.
+5. Re-run `verify` and report the exact structured error.

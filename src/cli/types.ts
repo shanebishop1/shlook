@@ -1,4 +1,5 @@
 import type { ConnectionCredential } from "../cli-connection.ts";
+import type { ProfileConfig } from "./profiles.ts";
 import type { PublishInput } from "../cli-files.ts";
 import type { SetupInput } from "../cli-setup.ts";
 import type {
@@ -40,6 +41,10 @@ export interface CliOptions {
   name?: string;
   description?: string;
   offset?: string;
+  instance?: string;
+  tokenEnv?: string;
+  url?: string;
+  allowLoopbackHttp?: boolean;
 }
 
 export interface CliDependencies {
@@ -60,6 +65,25 @@ export interface CliDependencies {
   currentUid?: () => number | undefined;
   persistConnection?: (credential: ConnectionCredential) => Promise<string>;
   loadConnection?: () => Promise<ConnectionCredential>;
+  backend?: "cloudflare" | "native";
+  instanceName?: string;
+  selectedOrigin?: string;
+  selectedInstanceExplicit?: boolean;
+  profileTokenEnv?: string;
+  saveProfileCredential?: (
+    name: string,
+    type: "native" | "cloudflare",
+    url: string,
+    token: string,
+  ) => Promise<void>;
+  loadProfileCredential?: (
+    name: string,
+    type: "native" | "cloudflare",
+    url: string,
+  ) => Promise<string | undefined>;
+  removeProfileCredential?: (name: string) => Promise<void>;
+  loadProfileConfiguration?: () => Promise<ProfileConfig>;
+  saveProfileConfiguration?: (config: ProfileConfig) => Promise<void>;
   loadPublishInput?: (path: string, entrypoint?: string) => Promise<PublishInput>;
   parseArguments?: (argv: string[]) => { positionals: string[]; options: CliOptions };
   planSetup?: (input: SetupInput) => Promise<unknown>;

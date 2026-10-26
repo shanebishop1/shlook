@@ -306,3 +306,178 @@ export async function loadConnectionCredential(
     throw new Error("unable to load connection credential");
   }
 }
+
+export async function saveProfileCredential(
+  name: string,
+  type: "native" | "cloudflare",
+  url: string,
+  token: string,
+  dependencies: ConnectionDependencies = {},
+): Promise<void> {
+  try {
+    const uid = assertConnectionCredentialStorageSupported(dependencies);
+    if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(name) || name.length > 48 || token.length > 20_000)
+      throw new Error();
+    const path = join(dirname(resolveConnectionAuthPath(dependencies)), "credentials.json");
+    const fs = dependencies.fs ?? defaultFileSystem;
+    let contents: Record<string, unknown> = { version: 1, credentials: {} };
+    try {
+      await assertCanonicalPathComponents(path, fs, "unsafe profile credential path");
+      const handle = await fs.open(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const stat = await handle.stat();
+        if (
+          !stat.isFile() ||
+          stat.uid !== uid ||
+          (stat.mode & 0o7777) !== 0o600 ||
+          stat.size > maximumCredentialFileBytes
+        )
+          throw new Error();
+        const bytes = Buffer.alloc(maximumCredentialFileBytes + 1);
+        const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+        if (bytesRead > maximumCredentialFileBytes) throw new Error();
+        const parsed: unknown = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead)),
+        );
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          (parsed as { version?: unknown }).version !== 1 ||
+          typeof (parsed as { credentials?: unknown }).credentials !== "object"
+        )
+          throw new Error();
+        contents = parsed as Record<string, unknown>;
+      } finally {
+        await handle.close();
+      }
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    }
+    const credentials = contents.credentials as Record<string, unknown>;
+    credentials[name] = { type, url, token };
+    await atomicReplaceOwnerFile({
+      path,
+      temporaryPath: join(
+        dirname(path),
+        `.credentials.json.${(dependencies.randomId ?? randomUUID)()}`,
+      ),
+      data: `${JSON.stringify(contents)}\n`,
+      fs,
+      unsafePathMessage: "unsafe profile credential path",
+      enforceDirectoryMode: true,
+      validateTemporaryPath: true,
+      cleanup: "always-on-failure",
+    });
+  } catch {
+    throw new Error("unable to save profile credential");
+  }
+}
+
+export async function loadProfileCredential(
+  name: string,
+  type: "native" | "cloudflare",
+  url: string,
+  dependencies: ConnectionDependencies = {},
+): Promise<string | undefined> {
+  try {
+    const uid = assertConnectionCredentialStorageSupported(dependencies);
+    const path = join(dirname(resolveConnectionAuthPath(dependencies)), "credentials.json");
+    const fs = dependencies.fs ?? defaultFileSystem;
+    await assertCanonicalPathComponents(path, fs, "unsafe profile credential path");
+    const handle = await fs.open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.uid !== uid ||
+        (stat.mode & 0o7777) !== 0o600 ||
+        stat.size > maximumCredentialFileBytes
+      )
+        throw new Error();
+      const bytes = Buffer.alloc(maximumCredentialFileBytes + 1);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      if (bytesRead > maximumCredentialFileBytes) throw new Error();
+      const parsed: unknown = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead)),
+      );
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed) ||
+        (parsed as { version?: unknown }).version !== 1 ||
+        typeof (parsed as { credentials?: unknown }).credentials !== "object"
+      )
+        throw new Error();
+      const entry = (parsed as { credentials: Record<string, unknown> }).credentials[name];
+      if (entry === undefined) return undefined;
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error();
+      const value = entry as Record<string, unknown>;
+      if (value.type !== type || value.url !== url || typeof value.token !== "string")
+        throw new Error();
+      return value.token;
+    } finally {
+      await handle.close();
+    }
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error("unable to load profile credential");
+  }
+}
+
+export async function removeProfileCredential(
+  name: string,
+  dependencies: ConnectionDependencies = {},
+): Promise<void> {
+  const path = join(dirname(resolveConnectionAuthPath(dependencies)), "credentials.json");
+  const uid = assertConnectionCredentialStorageSupported(dependencies);
+  const fs = dependencies.fs ?? defaultFileSystem;
+  try {
+    const handle = await fs.open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    let data: Record<string, unknown>;
+    try {
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.uid !== uid ||
+        (stat.mode & 0o7777) !== 0o600 ||
+        stat.size > maximumCredentialFileBytes
+      )
+        throw new Error();
+      const b = Buffer.alloc(maximumCredentialFileBytes + 1);
+      const { bytesRead } = await handle.read(b, 0, b.length, 0);
+      data = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(b.subarray(0, bytesRead)),
+      ) as Record<string, unknown>;
+    } finally {
+      await handle.close();
+    }
+    const credentials = data.credentials as Record<string, unknown>;
+    delete credentials[name];
+    await atomicReplaceOwnerFile({
+      path,
+      temporaryPath: join(
+        dirname(path),
+        `.credentials.json.${(dependencies.randomId ?? randomUUID)()}`,
+      ),
+      data: `${JSON.stringify(data)}\n`,
+      fs,
+      unsafePathMessage: "unsafe profile credential path",
+      enforceDirectoryMode: true,
+      validateTemporaryPath: true,
+      cleanup: "always-on-failure",
+    });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "ENOENT")
+      throw new Error("unable to remove profile credential");
+  }
+}

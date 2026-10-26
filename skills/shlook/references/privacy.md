@@ -1,5 +1,7 @@
 # Privacy
 
+Cloudflare only. Native instances share a private library with no public/secret-link hosting.
+
 - Every new asset is private.
 - Private artifacts are served only from `SHLOOK_PRIVATE_ORIGIN` and require Cloudflare
   Access.

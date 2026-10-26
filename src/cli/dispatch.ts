@@ -1,9 +1,10 @@
-import { connect } from "./connection.ts";
+import { connect, connectNamed } from "./connection.ts";
 import { authCheck } from "./commands/auth.ts";
 import { assetCommand, allowsAssetSecrets } from "./commands/assets.ts";
 import { publish } from "./commands/publish.ts";
 import { setup } from "./commands/setup.ts";
 import { withConnectionProfile, usesConnectionProfile } from "./origins.ts";
+import { instanceCommand } from "./profiles.ts";
 import { CliError } from "./errors.ts";
 import type { CliCommandResult, CliDependencies, CliOptions } from "./types.ts";
 
@@ -14,10 +15,18 @@ export async function dispatch(
 ): Promise<CliCommandResult> {
   const [command, ...args] = positionals;
   if (command === undefined) throw new CliError("usage_error", "a command is required");
+  if (command === "instance")
+    return { command, data: await instanceCommand(args, options, dependencies) };
   if (command === "connect") {
+    if (options.instance !== undefined) {
+      if (args.length !== 0)
+        throw new CliError("usage_error", "connect does not accept credential arguments");
+      return { command, data: await connectNamed(dependencies, options.instance, options.fromEnv) };
+    }
     return { command, data: await connect(dependencies, args, options.fromEnv) };
   }
-  if (usesConnectionProfile(positionals)) dependencies = await withConnectionProfile(dependencies);
+  if (usesConnectionProfile(positionals))
+    dependencies = await withConnectionProfile(dependencies, options.instance);
   if (command === "auth" && args[0] === "check")
     return { command, data: await authCheck(dependencies) };
   if (

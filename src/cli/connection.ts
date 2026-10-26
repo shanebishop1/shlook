@@ -9,6 +9,15 @@ import { authenticatedFetch } from "./http.ts";
 import { AuthenticatedRedirectError, CliError } from "./errors.ts";
 import { defaultOrigins, origins } from "./origins.ts";
 import type { ConnectionTokenInput, ConnectionTokenPrompt, CliDependencies } from "./types.ts";
+import {
+  effectiveTokenEnv,
+  loadProfileConfig,
+  saveNamedCredential,
+  saveProfileConfig,
+  validateProfileConfig,
+  normalizedTokenEnv,
+  type InstanceProfile,
+} from "./profiles.ts";
 
 const maximumConnectionTokenBytes = 20_000;
 const maximumConnectionHealthBytes = 1_024;
@@ -271,4 +280,128 @@ export async function connect(
     throw new CliError("connection_persistence_failed", "unable to save connection credential");
   }
   return { domain: credential.domain, path, connected: true };
+}
+
+export async function connectNamed(
+  dependencies: CliDependencies,
+  name: string,
+  fromEnvironment = false,
+): Promise<{ instance: string; connected: true }> {
+  const config = await (dependencies.loadProfileConfiguration?.() ??
+    loadProfileConfig(dependencies));
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(name) || name.length > 48)
+    throw new CliError("usage_error", "invalid instance name");
+  const existingProfile = config.instances[name];
+  const envName = existingProfile
+    ? effectiveTokenEnv(name, existingProfile)
+    : normalizedTokenEnv(name);
+  let token: string;
+  if (fromEnvironment) {
+    const value = dependencies.env[envName];
+    if (value === undefined) throw new CliError("auth_required", `${envName} is required`);
+    token = value;
+  } else {
+    try {
+      token = await (
+        dependencies.readSecretInput ?? (() => readConnectionToken(process.stdin, process.stderr))
+      )();
+    } catch {
+      throw new CliError("invalid_credential", "invalid connection credential");
+    }
+  }
+  let profile: InstanceProfile;
+  let credential: ConnectionCredential | undefined;
+  if (existingProfile?.type === "native") {
+    if (!/^shlook_api_v1_[A-Za-z0-9_-]{43}$/.test(token))
+      throw new CliError("invalid_credential", "invalid connection credential");
+    profile = existingProfile;
+  } else {
+    try {
+      credential = decodeConnectionCredential(token);
+    } catch {
+      throw new CliError("invalid_credential", "invalid connection credential");
+    }
+    if (credential.origins === undefined)
+      throw new CliError(
+        "invalid_credential",
+        "a complete connection credential with origins is required",
+      );
+    profile = {
+      type: "cloudflare",
+      url: credential.origins.owner,
+      origins: {
+        private: credential.origins.private,
+        public: credential.origins.public,
+        share: credential.origins.share,
+      },
+      ...(existingProfile?.token_env ? { token_env: existingProfile.token_env } : {}),
+    };
+    if (
+      existingProfile &&
+      (existingProfile.type !== "cloudflare" ||
+        existingProfile.url !== profile.url ||
+        JSON.stringify(existingProfile.origins) !== JSON.stringify(profile.origins))
+    )
+      throw new CliError(
+        "invalid_credential",
+        "connection credential does not match instance origins",
+      );
+  }
+  if (!existingProfile) {
+    try {
+      validateProfileConfig({
+        ...config,
+        instances: { ...config.instances, [name]: profile },
+      });
+    } catch {
+      throw new CliError(
+        "invalid_configuration",
+        "instance profile conflicts with configured instances",
+      );
+    }
+  }
+  let response: Response;
+  try {
+    const headers =
+      profile.type === "native"
+        ? new Headers({ Authorization: `Bearer ${token}` })
+        : new Headers({
+            "CF-Access-Client-Id": credential!.accessClientId,
+            "CF-Access-Client-Secret": credential!.accessClientSecret,
+            "x-shlook-client": "1",
+          });
+    response = await dependencies.fetch(`${profile.url}/health`, {
+      method: "GET",
+      headers,
+      redirect: "manual",
+    });
+  } catch {
+    throw new CliError("connection_verification_failed", "connection verification failed");
+  }
+  if (!response.ok)
+    throw new CliError(
+      "connection_verification_failed",
+      `connection verification failed with status ${response.status}`,
+      response.status,
+    );
+  await verifyConnectionHealth(response);
+  if (dependencies.saveProfileCredential === undefined)
+    throw new CliError("connection_persistence_failed", "unable to save connection credential");
+  try {
+    await saveNamedCredential(dependencies, name, profile.type, profile.url, token);
+  } catch {
+    throw new CliError("connection_persistence_failed", "unable to save connection credential");
+  }
+  if (!existingProfile) {
+    config.instances[name] = profile;
+    try {
+      const validated = validateProfileConfig(config);
+      if (dependencies.saveProfileConfiguration !== undefined)
+        await dependencies.saveProfileConfiguration(validated);
+      else await saveProfileConfig(dependencies, validated);
+    } catch {
+      throw new CliError("connection_persistence_failed", "unable to save instance configuration");
+    }
+  }
+  return { instance: name, connected: true };
 }

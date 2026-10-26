@@ -1,8 +1,9 @@
-import { constants } from "node:fs";
-import { access, open, readdir, realpath, stat } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { extname, join, parse as parsePath, relative, resolve, sep } from "node:path";
-import type { FileHandle } from "node:fs/promises";
+import { publishFilesystem } from "./cli-filesystem.ts";
+import type { InputHandle } from "./cli-filesystem.ts";
 import { maxPublicationBytes, maxUploadBytes, maxUploadFiles } from "./upload-limits.ts";
+import { renderSafeMarkdown } from "./markdown.ts";
 
 export interface PublishFile {
   path: string;
@@ -158,33 +159,6 @@ function contained(root: string, path: string): boolean {
   );
 }
 
-interface DescriptorPath {
-  path: string;
-  canonical: string;
-}
-
-const openFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
-
-async function descriptorPath(handle: FileHandle): Promise<DescriptorPath> {
-  const opened = await handle.stat();
-  for (const root of ["/proc/self/fd", "/dev/fd"]) {
-    const path = `${root}/${handle.fd}`;
-    try {
-      const [throughDescriptor, canonical] = await Promise.all([stat(path), realpath(path)]);
-      if (
-        throughDescriptor.dev === opened.dev &&
-        throughDescriptor.ino === opened.ino &&
-        resolve(canonical) === canonical
-      ) {
-        return { path, canonical };
-      }
-    } catch {
-      // Try the other verified descriptor filesystem.
-    }
-  }
-  throw new Error("no verified file-descriptor filesystem is available");
-}
-
 function logicalChild(parent: string, name: string): string {
   if (
     name === "" ||
@@ -202,23 +176,22 @@ function logicalChild(parent: string, name: string): string {
   return parent === "" ? name : `${parent}/${name}`;
 }
 
-async function openInput(path: string): Promise<FileHandle> {
-  const absolute = resolve(path);
+async function openInput(path: string): Promise<InputHandle> {
+  const absolute = await publishFilesystem.inputPath(resolve(path));
   const parsed = parsePath(absolute);
   const parts = relative(parsed.root, absolute).split(sep).filter(Boolean);
-  let handle = await open(parsed.root, openFlags | constants.O_DIRECTORY);
+  let handle: InputHandle = await publishFilesystem.openRoot(parsed.root);
   try {
     if (!(await handle.stat()).isDirectory()) {
       throw new Error("filesystem root is not a directory");
     }
-    let parent = await descriptorPath(handle);
+    let parent = await publishFilesystem.canonical(handle);
     for (let index = 0; index < parts.length; index += 1) {
-      const childPath = join(parent.path, parts[index]);
-      const child = await open(childPath, openFlags);
+      const child = await publishFilesystem.openChild(handle, parts[index]);
       try {
         const metadata = await child.stat();
-        const descriptor = await descriptorPath(child);
-        if (!contained(parent.canonical, descriptor.canonical)) {
+        const canonical = await publishFilesystem.canonical(child);
+        if (!contained(parent, canonical)) {
           throw new Error("publish input escaped its descriptor parent");
         }
         if (index < parts.length - 1 && !metadata.isDirectory()) {
@@ -226,7 +199,7 @@ async function openInput(path: string): Promise<FileHandle> {
         }
         await handle.close();
         handle = child;
-        parent = descriptor;
+        parent = canonical;
       } catch (cause) {
         await child.close();
         throw cause;
@@ -241,27 +214,27 @@ async function openInput(path: string): Promise<FileHandle> {
 
 async function walk(
   rootCanonical: string,
-  directory: FileHandle,
+  directory: InputHandle,
   logicalParent: string,
   files: FileCandidate[],
   totalBytes: { value: number },
 ): Promise<void> {
   const metadata = await directory.stat();
   if (!metadata.isDirectory()) throw new Error("publish input contains a non-directory");
-  const descriptor = await descriptorPath(directory);
-  if (!contained(rootCanonical, descriptor.canonical)) {
+  const canonical = await publishFilesystem.canonical(directory);
+  if (!contained(rootCanonical, canonical)) {
     throw new Error("publish input escaped its descriptor root");
   }
 
-  const entries = await readdir(descriptor.path, { withFileTypes: true });
-  for (const entry of entries) {
-    const publishPath = logicalChild(logicalParent, entry.name);
-    const child = await open(join(descriptor.path, entry.name), openFlags);
+  const entries = await publishFilesystem.entries(directory);
+  for (const name of entries) {
+    const publishPath = logicalChild(logicalParent, name);
+    const child = await publishFilesystem.openChild(directory, name);
     let retained = false;
     try {
       const childMetadata = await child.stat();
-      const childDescriptor = await descriptorPath(child);
-      if (!contained(rootCanonical, childDescriptor.canonical)) {
+      const childCanonical = await publishFilesystem.canonical(child);
+      if (!contained(rootCanonical, childCanonical)) {
         throw new Error("publish input escaped its descriptor root");
       }
       if (childMetadata.isDirectory())
@@ -293,7 +266,7 @@ async function walk(
 
 interface FileCandidate {
   path: string;
-  handle: FileHandle;
+  handle: InputHandle;
   size: number;
   contentType: string;
 }
@@ -325,29 +298,39 @@ export async function loadPublishInput(
   const handle = await openInput(path);
   try {
     const metadata = await handle.stat();
-    const descriptor = await descriptorPath(handle);
+    const canonical = await publishFilesystem.canonical(handle);
     if (metadata.isFile()) {
       const name = parsePath(path).base;
       const extension = extname(name).toLowerCase();
-      if (![".html", ".htm", ...Object.keys(rasterTypes)].includes(extension)) {
-        throw new Error("single-file publish requires HTML or a raster image");
+      if (extension === ".mdx") {
+        throw new Error("MDX single-file entrypoints are not supported");
       }
-      if (requestedEntrypoint !== undefined && requestedEntrypoint !== name) {
+      if (![".html", ".htm", ".md", ...Object.keys(rasterTypes)].includes(extension)) {
+        throw new Error("single-file publish requires HTML, Markdown, or a raster image");
+      }
+      const entrypoint = extension === ".md" ? `${name}.html` : name;
+      if (requestedEntrypoint !== undefined && requestedEntrypoint !== entrypoint) {
         throw new Error("single-file entrypoint must equal the filename");
       }
       if (!Number.isSafeInteger(metadata.size) || metadata.size > maxUploadBytes) {
         throw new Error("publish input contains a file larger than 25 MiB");
       }
+      const original = await readCandidate({
+        path: name,
+        handle,
+        size: metadata.size,
+        contentType: contentType(name),
+      });
+      if (extension !== ".md") return { entrypoint, files: [original] };
+      const source = new TextDecoder("utf-8", { fatal: true }).decode(original.bytes);
+      const rendered = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>\n${renderSafeMarkdown(source)}\n</body></html>\n`;
+      const bytes = new TextEncoder().encode(rendered);
+      if (bytes.byteLength > maxUploadBytes) {
+        throw new Error("generated Markdown HTML is larger than 25 MiB");
+      }
       return {
-        entrypoint: name,
-        files: [
-          await readCandidate({
-            path: name,
-            handle,
-            size: metadata.size,
-            contentType: contentType(name),
-          }),
-        ],
+        entrypoint,
+        files: [{ path: entrypoint, bytes, contentType: "text/html; charset=utf-8" }],
       };
     }
     if (!metadata.isDirectory())
@@ -356,7 +339,7 @@ export async function loadPublishInput(
     const candidates: FileCandidate[] = [];
     const totalBytes = { value: 0 };
     try {
-      await walk(descriptor.canonical, handle, "", candidates, totalBytes);
+      await walk(canonical, handle, "", candidates, totalBytes);
       if (candidates.length === 0) throw new Error("publish directory is empty");
       const entrypoint = requestedEntrypoint ?? "index.html";
       if (!candidates.some((file) => file.path === entrypoint)) {

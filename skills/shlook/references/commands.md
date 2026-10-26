@@ -1,5 +1,19 @@
 # Commands
 
+Named instances:
+
+```text
+shlook instance add <name> --url <origin> [--token-env <ENV>] [--allow-loopback-http] --json
+shlook instance list --json
+shlook instance default <name> --json
+shlook instance remove <name> --json
+shlook connect [--instance <name>] [--from-env] [--json]
+shlook setup (--plan | --apply) [--instance <name>] <existing setup options> --json
+shlook <auth check|status|publish|list|show|verify|delete|visibility|secret|share|hard> <existing arguments> [--instance <name>] --json
+```
+
+See [instances](instances.md) for authentication and [self-hosting](self-host.md) for server commands.
+
 Use `--json` for agent-consumed calls. Success uses
 `{"ok":true,"command":...,"data":...}`; failure uses
 `{"ok":false,"command":...,"error":...}` and a non-zero exit code.
@@ -55,6 +69,6 @@ Publish requires a human-readable name of 1-80 characters. The optional descript
 up to 500 characters. Both values are trimmed, stored with the asset, returned by `list` and
 `show`, and displayed and searched in the owner archive.
 
-Publish accepts one HTML file, one raster image, or one static directory. It rejects symlinks,
+Publish accepts HTML, raster images, a static directory, or a single Markdown file. It rejects symlinks,
 traversal, non-regular files, missing entrypoints, and more than 500 files. A directory defaults
 to `index.html`; a single file uses its filename.

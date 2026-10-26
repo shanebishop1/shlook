@@ -26,6 +26,10 @@ export function parseCliArguments(argv: string[]): {
         name: { type: "string" },
         description: { type: "string" },
         offset: { type: "string" },
+        instance: { type: "string" },
+        url: { type: "string" },
+        "token-env": { type: "string" },
+        "allow-loopback-http": { type: "boolean" },
       },
     });
     return {
@@ -44,6 +48,10 @@ export function parseCliArguments(argv: string[]): {
         name: values.name,
         description: values.description,
         offset: values.offset,
+        instance: values.instance,
+        url: values.url,
+        tokenEnv: values["token-env"],
+        allowLoopbackHttp: values["allow-loopback-http"],
       },
     };
   } catch {
