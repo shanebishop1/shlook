@@ -12,6 +12,13 @@ const headers = (response: ServerResponse, type: string) => {
 };
 const shell = (title: string, body: string) =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title} · Shlook</title><link rel="stylesheet" href="/ui/style.css"></head><body><main id="archive">${body}</main><script src="/ui/app.js" defer></script></body></html>`;
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 
 const script = String.raw`(()=>{
 const $=s=>document.querySelector(s), api=async(path,opts={})=>{const r=await fetch(path,{credentials:'same-origin',...opts,headers:{...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});if(!r.ok)throw Error((await r.json().catch(()=>({error:'request_failed'}))).error||'request_failed');return r.status===204?null:r.json()};
@@ -75,7 +82,7 @@ export function createNativeUiHandler() {
       "text/html; charset=utf-8",
       shell(
         "Archive",
-        `<header class="mast"><div><p class="eyebrow">SHLOOK · PRIVATE LIBRARY</p><h1>Archive</h1><p id="identity">${context.user.displayName} · ${context.role}</p></div><button id="logout" class="quiet">Log out</button></header><section class="toolbar"><label class="search">Search publications<input id="search" type="search" placeholder="Name, description, author"></label><a href="/login">Session details</a></section><section id="assets" aria-live="polite"></section><button id="more" hidden>Load more</button><section id="upload-panel" hidden><h2>Publish a private artifact</h2><form id="upload"><label>Name<input name="name" required maxlength="120"></label><label>Description<input name="description" maxlength="500"></label><label>Files<input name="files" type="file" multiple></label><label>Static folder<input name="files" type="file" multiple webkitdirectory></label><button>Upload and publish</button><p id="upload-status" role="status"></p></form><p class="note">Share links and public visibility are not supported by this private native library.</p></section><section id="viewer" hidden><div class="viewer-head"><h2>Preview</h2><button id="close-preview">Close</button></div><iframe id="preview" title="Sandboxed artifact preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></section>`,
+        `<header class="mast"><div><p class="eyebrow">SHLOOK · PRIVATE LIBRARY</p><h1>Archive</h1><p id="identity">${escapeHtml(context.user.displayName)} · ${context.role}</p></div><button id="logout" class="quiet">Log out</button></header><section class="toolbar"><label class="search">Search publications<input id="search" type="search" placeholder="Name, description, author"></label><a href="/login">Session details</a></section><section id="assets" aria-live="polite"></section><button id="more" hidden>Load more</button><section id="upload-panel" hidden><h2>Publish a private artifact</h2><form id="upload"><label>Name<input name="name" required maxlength="120"></label><label>Description<input name="description" maxlength="500"></label><label>Files<input name="files" type="file" multiple></label><label>Static folder<input name="files" type="file" multiple webkitdirectory></label><button>Upload and publish</button><p id="upload-status" role="status"></p></form><p class="note">Share links and public visibility are not supported by this private native library.</p></section><section id="viewer" hidden><div class="viewer-head"><h2>Preview</h2><button id="close-preview">Close</button></div><iframe id="preview" title="Sandboxed artifact preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></section>`,
       ),
     );
   };
