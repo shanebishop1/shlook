@@ -320,7 +320,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain('data-batch-delete aria-label="Delete selected artifacts"');
     expect(body).toContain('data-select-item type="checkbox"');
     expect(body).toContain("const setSelectMode = (enabled) => {");
-    expect(body).toContain("Promise.all(items.map((item) => ownerRequest('/api/assets/'");
+    expect(body).toContain("Promise.allSettled(items.map((item) => ownerRequest('/api/assets/'");
     expect(body).toContain(".upload-result-url { overflow-wrap: anywhere; word-break: break-word;");
     expect(body).toContain(".sr-only { position: absolute;");
     expect(body).toContain(".search { position: relative; display: block;");
