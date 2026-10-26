@@ -16,6 +16,7 @@ import {
   authenticateSession,
   authenticateToken,
   createSession,
+  renewSession,
   verifyCsrf,
 } from "../../src/native/auth.ts";
 import { AuthThrottle, checkLoginExchange, checkRequestBoundary } from "../../src/native/server.ts";
@@ -102,7 +103,17 @@ test("browser sessions renew 30-day idle expiry under a 90-day absolute/token ca
     const identity = authenticateToken(store, token.secret, start)!;
     const idleSession = createSession(store, identity, start);
     assert.equal(idleSession.expiresAt, start + 30 * 24 * 60 * 60 * 1000);
-    const activity = authenticateSession(store, idleSession.id, start + 29 * 24 * 60 * 60 * 1000)!;
+    const untouched = authenticateSession(store, idleSession.id, start + 29 * 24 * 60 * 60 * 1000)!;
+    assert.equal(untouched.expiresAt, start + 59 * 24 * 60 * 60 * 1000);
+    assert.equal(
+      (
+        store.db
+          .prepare("SELECT expires_at AS expiresAt FROM sessions WHERE session_hash=?")
+          .get(createHash("sha256").update(idleSession.id).digest("hex")) as any
+      ).expiresAt,
+      idleSession.expiresAt,
+    );
+    const activity = renewSession(store, idleSession.id, start + 29 * 24 * 60 * 60 * 1000)!;
     assert.equal(activity.expiresAt, start + 59 * 24 * 60 * 60 * 1000);
     assert.equal(
       (
@@ -118,10 +129,10 @@ test("browser sessions renew 30-day idle expiry under a 90-day absolute/token ca
     );
 
     const absoluteSession = createSession(store, identity, start);
-    assert.ok(authenticateSession(store, absoluteSession.id, start + 29 * 24 * 60 * 60 * 1000));
-    assert.ok(authenticateSession(store, absoluteSession.id, start + 58 * 24 * 60 * 60 * 1000));
-    assert.ok(authenticateSession(store, absoluteSession.id, start + 87 * 24 * 60 * 60 * 1000));
-    const beforeAbsolute = authenticateSession(
+    assert.ok(renewSession(store, absoluteSession.id, start + 29 * 24 * 60 * 60 * 1000));
+    assert.ok(renewSession(store, absoluteSession.id, start + 58 * 24 * 60 * 60 * 1000));
+    assert.ok(renewSession(store, absoluteSession.id, start + 87 * 24 * 60 * 60 * 1000));
+    const beforeAbsolute = renewSession(
       store,
       absoluteSession.id,
       start + 89 * 24 * 60 * 60 * 1000,
@@ -339,6 +350,28 @@ test("native server bootstraps and rotates login, restores CSRF after restart, t
       assert.ok(Number(/Max-Age=(\d+)/.exec(refreshedCookie)?.[1]) > 29 * 86400);
       const csrfToken = JSON.parse(get.body).csrfToken;
       assert.match(csrfToken, /^[A-Za-z0-9_-]{43}$/);
+      const sessionHash = createHash("sha256").update(cookie.split("=")[1]).digest("hex");
+      const beforeDenied = store.db
+        .prepare(
+          "SELECT last_seen AS lastSeen,expires_at AS expiresAt FROM sessions WHERE session_hash=?",
+        )
+        .get(sessionHash) as { lastSeen: number; expiresAt: number };
+      const denied = await request(port, "DELETE", "/api/session", {
+        host: "owner.example",
+        origin: "https://owner.example",
+        cookie,
+        "x-shlook-csrf": "invalid",
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers["set-cookie"], undefined);
+      assert.deepEqual(
+        store.db
+          .prepare(
+            "SELECT last_seen AS lastSeen,expires_at AS expiresAt FROM sessions WHERE session_hash=?",
+          )
+          .get(sessionHash),
+        beforeDenied,
+      );
       const rotated = await request(
         port,
         "POST",

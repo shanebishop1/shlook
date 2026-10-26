@@ -3,7 +3,13 @@ import { createServer, type Server } from "node:http";
 import { isIP } from "node:net";
 import { createHash as cryptoCreateHash } from "node:crypto";
 import type { NativeConfig } from "./config.ts";
-import { authenticateSession, authenticateToken, createSession, verifyCsrf } from "./auth.ts";
+import {
+  authenticateSession,
+  authenticateToken,
+  createSession,
+  renewSession,
+  verifyCsrf,
+} from "./auth.ts";
 import type { NativeStore, Role } from "./store.ts";
 
 type Bucket = { started: number; failures: number };
@@ -158,16 +164,25 @@ function boundary(
     }
     return { identity, kind: "bearer" };
   }
-  if (["/login", "/", "/archive"].includes(path) && request.method === "GET")
+  if (path === "/login" && request.method === "GET") return { kind: "public" };
+  if (["/ui/app.js", "/ui/style.css"].includes(path) && request.method === "GET")
     return { kind: "public" };
   if (path === "/api/session" && request.method === "POST") return { kind: "login" };
   const cookie = request.headers.cookie?.match(
     /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
   )?.[1];
-  if (!cookie) return { status: 401 };
+  if (!cookie) {
+    if ((path === "/" || path === "/archive") && request.method === "GET")
+      return { kind: "public" };
+    return { status: 401 };
+  }
   if (!matched.secure) return { status: 401 };
   const session = authenticateSession(store, cookie, now);
-  if (!session) return { status: 401 };
+  if (!session) {
+    if ((path === "/" || path === "/archive") && request.method === "GET")
+      return { kind: "public" };
+    return { status: 401 };
+  }
   if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "GET")) {
     if (
       origin !== matched.origin ||
@@ -192,6 +207,23 @@ export function checkRequestBoundary(
 ): BoundaryResult {
   const matched = matchingOrigin(request.headers.host, config);
   return matched ? boundary(request, store, matched, throttle, now) : { status: 400 };
+}
+
+export function revalidateAuthorizedRequest(
+  request: IncomingMessage,
+  store: NativeStore,
+  config: NativeConfig,
+  original: { identity: Identity; kind: "cookie" | "bearer" },
+  now = Date.now(),
+) {
+  const current = checkRequestBoundary(request, store, config, new AuthThrottle(), now);
+  return (
+    "identity" in current &&
+    current.kind === original.kind &&
+    current.identity.user.id === original.identity.user.id &&
+    current.identity.tokenId === original.identity.tokenId &&
+    current.identity.role === original.identity.role
+  );
 }
 
 export function checkLoginExchange(request: IncomingMessage, config: NativeConfig): boolean {
@@ -254,12 +286,22 @@ export function createNativeServer(options: NativeServerOptions): Server {
         });
         return;
       }
-      if (result.kind === "cookie" && result.expiresAt) {
-        const cookie = request.headers.cookie?.match(
-          /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
-        )?.[1];
-        if (cookie) response.setHeader("Set-Cookie", sessionCookie(cookie, result.expiresAt));
-      }
+      const nativeEnd = response.end.bind(response);
+      let ended = false;
+      response.end = ((...args: Parameters<typeof response.end>) => {
+        if (!ended) {
+          ended = true;
+          if (result.kind === "cookie" && response.statusCode >= 200 && response.statusCode < 400) {
+            const cookie = request.headers.cookie?.match(
+              /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
+            )?.[1];
+            const renewed = cookie ? renewSession(options.store, cookie) : null;
+            if (renewed && !response.headersSent)
+              response.setHeader("Set-Cookie", sessionCookie(cookie!, renewed.expiresAt));
+          }
+        }
+        return nativeEnd(...args);
+      }) as typeof response.end;
       if (result.kind === "login") {
         if (!matched.secure || !loginAllowed(request, matched.origin)) {
           json(response, 403, { error: "forbidden" });

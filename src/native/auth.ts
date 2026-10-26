@@ -89,9 +89,6 @@ export function authenticateSession(store: NativeStore, id: string, now = Date.n
     row.createdAt + NATIVE_SESSION_ABSOLUTE_MS,
     row.tokenExpires,
   );
-  store.db
-    .prepare("UPDATE sessions SET last_seen=?,expires_at=? WHERE session_hash=?")
-    .run(now, expiresAt, row.sessionHash);
   return {
     user: { id: row.id, displayName: row.displayName },
     role: row.role as Role,
@@ -100,6 +97,15 @@ export function authenticateSession(store: NativeStore, id: string, now = Date.n
     csrfToken: csrfFor(id),
     expiresAt,
   };
+}
+
+export function renewSession(store: NativeStore, id: string, now = Date.now()) {
+  const session = authenticateSession(store, id, now);
+  if (!session) return null;
+  store.db
+    .prepare("UPDATE sessions SET last_seen=?,expires_at=? WHERE session_hash=?")
+    .run(now, session.expiresAt, hash(id));
+  return session;
 }
 
 export function verifyCsrf(expectedHash: string, supplied: string) {

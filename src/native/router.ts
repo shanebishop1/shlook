@@ -6,6 +6,7 @@ import {
   type BoundaryResult,
   type Identity,
   type NativeServerOptions,
+  revalidateAuthorizedRequest,
 } from "./server.ts";
 import type { NativeConfig } from "./config.ts";
 import type { NativeStore } from "./store.ts";
@@ -73,6 +74,11 @@ export type NativeApplicationOptions = {
   store: NativeStore;
   config: NativeConfig;
   loginHandler?: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
+  ownerHandler?: (
+    request: IncomingMessage,
+    response: ServerResponse,
+    context: { user: Identity["user"]; role: Identity["role"] },
+  ) => void | Promise<void>;
   throttle?: NativeServerOptions["throttle"];
 };
 export type NativeApplication = {
@@ -99,6 +105,18 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       method = request.method ?? "GET",
       identity = auth.identity;
     try {
+      if (
+        (method === "GET" || method === "HEAD") &&
+        (path === "/" || path === "/archive" || path.startsWith("/ui/"))
+      ) {
+        if (options.ownerHandler) {
+          await options.ownerHandler(request, response, {
+            user: identity.user,
+            role: identity.role,
+          });
+          return;
+        }
+      }
       if (method === "GET" && path === "/health") {
         requireViewer(identity);
         apiResponse(response, 200, { ok: true, service: "shlook" });
@@ -122,7 +140,17 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       }
       if (path === "/api/assets" && method === "POST") {
         requirePublisher(identity);
-        apiResponse(response, 201, { asset: assets.create(await bodyJson(request), identity) });
+        const input = await bodyJson(request);
+        if (
+          !revalidateAuthorizedRequest(
+            request,
+            options.store,
+            options.config,
+            auth as { identity: Identity; kind: "cookie" | "bearer" },
+          )
+        )
+          throw new NativeApiError(401, "unauthorized");
+        apiResponse(response, 201, { asset: assets.create(input, identity) });
         return;
       }
       const assetRoute = /^\/api\/assets\/([^/]+)(?:\/(.*))?$/.exec(path);
@@ -149,7 +177,17 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
         }
         if (method === "POST" && rest === "finalize") {
           requirePublisher(identity);
-          apiResponse(response, 200, { asset: assets.finalize(id, await bodyJson(request)) });
+          const input = await bodyJson(request);
+          if (
+            !revalidateAuthorizedRequest(
+              request,
+              options.store,
+              options.config,
+              auth as { identity: Identity; kind: "cookie" | "bearer" },
+            )
+          )
+            throw new NativeApiError(401, "unauthorized");
+          apiResponse(response, 200, { asset: assets.finalize(id, input) });
           return;
         }
         if (method === "DELETE" && !rest) {
@@ -161,7 +199,17 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
         }
         if (method === "PATCH" && rest === "expiry") {
           requirePublisher(identity);
-          apiResponse(response, 200, { asset: assets.setExpiry(id, await bodyJson(request)) });
+          const input = await bodyJson(request);
+          if (
+            !revalidateAuthorizedRequest(
+              request,
+              options.store,
+              options.config,
+              auth as { identity: Identity; kind: "cookie" | "bearer" },
+            )
+          )
+            throw new NativeApiError(401, "unauthorized");
+          apiResponse(response, 200, { asset: assets.setExpiry(id, input) });
           return;
         }
         if (method === "PATCH" && rest === "visibility") {
@@ -212,7 +260,10 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       response.end();
       return;
     }
-    if (path === "/login" && options.loginHandler) {
+    if (
+      (path === "/login" || path === "/ui/app.js" || path === "/ui/style.css") &&
+      options.loginHandler
+    ) {
       await options.loginHandler(request, response);
       return;
     }
