@@ -190,7 +190,11 @@ test("nested CLI-style encoded paths publish and serve compiled nested HTML/CSS/
         .get(id)?.count,
       0,
     );
-    const abandoned = app.assets.create({ name: "Abandoned" }, authenticateToken(store, f.token)!);
+    const abandoned = app.assets.create(
+      { name: "Abandoned" },
+      authenticateToken(store, f.token)!,
+      () => {},
+    );
     const abandonedFile = await app.assets.upload(
       abandoned.id,
       "stale.txt",

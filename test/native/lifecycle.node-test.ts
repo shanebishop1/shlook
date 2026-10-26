@@ -12,6 +12,7 @@ const identity = {
   role: "publisher" as const,
   tokenId: "token",
 };
+const allowTrustedServiceCall = () => {};
 async function* source(data: Uint8Array) {
   yield data;
 }
@@ -25,16 +26,24 @@ test("hard expiry denies immediately, delete tombstones and cleanup is restart-s
     store.addUser(identity.user.id, identity.user.displayName);
     const token = store.issueToken({ userId: identity.user.id, name: "test", role: "publisher" });
     const actor = { ...identity, tokenId: token.id };
-    const asset = service.create({ name: "Lifetime" }, actor);
+    const asset = service.create({ name: "Lifetime" }, actor, allowTrustedServiceCall);
     const html = Buffer.from("<html><body>lifecycle</body></html>");
     const file = await awaitUpload(service, asset.id, "index.html", html);
     assert.ok(file);
-    service.finalize(asset.id, { entrypoint: "index.html", files: [file] });
+    service.finalize(
+      asset.id,
+      { entrypoint: "index.html", files: [file] },
+      allowTrustedServiceCall,
+    );
     store.close();
     store = new NativeStore(directory);
     service = new NativeAssetService(store, () => now);
     assert.equal(service.get(asset.id).state, "live");
-    service.setExpiry(asset.id, { hardExpiresAt: new Date(now + 1000).toISOString() });
+    service.setExpiry(
+      asset.id,
+      { hardExpiresAt: new Date(now + 1000).toISOString() },
+      allowTrustedServiceCall,
+    );
     now += 1001;
     assert.throws(
       () => service.get(asset.id),
@@ -49,7 +58,7 @@ test("hard expiry denies immediately, delete tombstones and cleanup is restart-s
       "deleted",
     );
     assert.equal(readdirObjects(reopened.objects), 0);
-    reopened.delete(asset.id);
+    reopened.delete(asset.id, allowTrustedServiceCall);
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
@@ -76,7 +85,7 @@ test("upload reservation prevents finalize races and concurrent delete cannot pu
     store.addUser(identity.user.id, identity.user.displayName);
     const token = store.issueToken({ userId: identity.user.id, name: "test", role: "publisher" });
     const actor = { ...identity, tokenId: token.id };
-    const asset = service.create({ name: "Race" }, actor);
+    const asset = service.create({ name: "Race" }, actor, allowTrustedServiceCall);
     let resume!: () => void;
     const blocked = new Promise<void>((resolve) => (resume = resolve));
     let started!: () => void;
@@ -89,10 +98,15 @@ test("upload reservation prevents finalize races and concurrent delete cannot pu
     const upload = service.upload(asset.id, "index.html", slow(), "13", () => {});
     await isStarted;
     assert.throws(
-      () => service.finalize(asset.id, { entrypoint: "index.html", files: [] }),
+      () =>
+        service.finalize(
+          asset.id,
+          { entrypoint: "index.html", files: [] },
+          allowTrustedServiceCall,
+        ),
       (error) => error instanceof NativeApiError && error.status === 409,
     );
-    service.delete(asset.id);
+    service.delete(asset.id, allowTrustedServiceCall);
     resume();
     await assert.rejects(
       upload,
@@ -116,7 +130,11 @@ test("ordinary cleanup leaves active finalization alone; startup recovery reopen
   try {
     store.addUser(identity.user.id, identity.user.displayName);
     const token = store.issueToken({ userId: identity.user.id, name: "test", role: "publisher" });
-    const asset = service.create({ name: "Finalizing" }, { ...identity, tokenId: token.id });
+    const asset = service.create(
+      { name: "Finalizing" },
+      { ...identity, tokenId: token.id },
+      allowTrustedServiceCall,
+    );
     const uploadId = randomUUID(),
       objectKey = randomBytes(24).toString("hex"),
       old = Date.now() - 25 * 60 * 60 * 1000;
@@ -162,14 +180,14 @@ test("file count and streamed file byte limit are enforced without permanent res
     store.addUser(identity.user.id, identity.user.displayName);
     const token = store.issueToken({ userId: identity.user.id, name: "test", role: "publisher" });
     const actor = { ...identity, tokenId: token.id };
-    const asset = service.create({ name: "Count" }, actor);
+    const asset = service.create({ name: "Count" }, actor, allowTrustedServiceCall);
     for (let i = 0; i < 500; i++)
       await service.upload(asset.id, `f${i}.txt`, source(Buffer.alloc(0)), "0", () => {});
     await assert.rejects(
       service.upload(asset.id, "extra.txt", source(Buffer.alloc(0)), "0", () => {}),
       (error) => error instanceof NativeApiError && error.status === 413,
     );
-    const tooLarge = service.create({ name: "Too big" }, actor);
+    const tooLarge = service.create({ name: "Too big" }, actor, allowTrustedServiceCall);
     await assert.rejects(
       service.upload(
         tooLarge.id,
@@ -186,7 +204,7 @@ test("file count and streamed file byte limit are enforced without permanent res
         .get(tooLarge.id)?.count,
       0,
     );
-    const lying = service.create({ name: "Lying length" }, actor);
+    const lying = service.create({ name: "Lying length" }, actor, allowTrustedServiceCall);
     await assert.rejects(
       service.upload(lying.id, "one.txt", source(Buffer.from("longer")), "1", () => {}),
       (error) => error instanceof NativeApiError && error.status === 400,
@@ -196,7 +214,7 @@ test("file count and streamed file byte limit are enforced without permanent res
         ?.count,
       0,
     );
-    const missingLength = service.create({ name: "No length" }, actor);
+    const missingLength = service.create({ name: "No length" }, actor, allowTrustedServiceCall);
     assert.equal(
       (
         await service.upload(
@@ -210,7 +228,7 @@ test("file count and streamed file byte limit are enforced without permanent res
       "one.txt",
     );
 
-    const full = service.create({ name: "Publication cap" }, actor),
+    const full = service.create({ name: "Publication cap" }, actor, allowTrustedServiceCall),
       reserve = store.db.prepare(
         "INSERT INTO asset_uploads(upload_id,asset_id,path,object_key,byte_size,state,created_at,updated_at) VALUES(?,?,?,?,?,'uploaded',?,?)",
       );

@@ -162,7 +162,9 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
         requirePublisher(identity);
         const input = await bodyJson(request);
         assertFreshAuthorization();
-        apiResponse(response, 201, { asset: assets.create(input, identity) });
+        apiResponse(response, 201, {
+          asset: assets.create(input, identity, assertFreshAuthorization),
+        });
         return;
       }
       const assetRoute = /^\/api\/assets\/([^/]+)(?:\/(.*))?$/.exec(path);
@@ -198,13 +200,15 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
           requirePublisher(identity);
           const input = await bodyJson(request);
           assertFreshAuthorization();
-          apiResponse(response, 200, { asset: assets.finalize(id, input) });
+          apiResponse(response, 200, {
+            asset: assets.finalize(id, input, assertFreshAuthorization),
+          });
           return;
         }
         if (method === "DELETE" && !rest) {
           requirePublisher(identity);
           assertFreshAuthorization();
-          assets.delete(id);
+          assets.delete(id, assertFreshAuthorization);
           response.statusCode = 204;
           response.end();
           return;
@@ -213,14 +217,18 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
           requirePublisher(identity);
           const input = await bodyJson(request);
           assertFreshAuthorization();
-          apiResponse(response, 200, { asset: assets.setExpiry(id, input) });
+          apiResponse(response, 200, {
+            asset: assets.setExpiry(id, input, assertFreshAuthorization),
+          });
           return;
         }
         if (method === "PATCH" && rest === "visibility") {
           requirePublisher(identity);
           const input = await bodyJson(request);
           assertFreshAuthorization();
-          apiResponse(response, 200, { asset: assets.setVisibility(id, input) });
+          apiResponse(response, 200, {
+            asset: assets.setVisibility(id, input, assertFreshAuthorization),
+          });
           return;
         }
         if (/^(?:secret|share)(?:\/|$)/.test(rest))

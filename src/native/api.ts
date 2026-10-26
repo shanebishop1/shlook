@@ -186,7 +186,7 @@ export class NativeAssetService {
     const page = rows.slice(0, 100).map(rowAsset);
     return { assets: page, nextOffset: rows.length > 100 ? offset + 100 : null };
   }
-  create(input: unknown, identity: Identity): NativeAsset {
+  create(input: unknown, identity: Identity, assertAuthorized: () => void): NativeAsset {
     if (identity.role !== "publisher") return fail(403, "forbidden");
     const value = input as any;
     const metadata =
@@ -200,19 +200,27 @@ export class NativeAssetService {
       return fail(400, "unsupported_operation");
     const now = this.now(),
       id = randomUUID();
-    this.store.db
-      .prepare(
-        "INSERT INTO assets(id,name,description,state,author_id,author_display_name,created_at,updated_at) VALUES(?,?,?,'uploading',?,?,?,?)",
-      )
-      .run(
-        id,
-        metadata.name,
-        metadata.description,
-        identity.user.id,
-        identity.user.displayName,
-        now,
-        now,
-      );
+    this.store.db.exec("BEGIN IMMEDIATE");
+    try {
+      assertAuthorized();
+      this.store.db
+        .prepare(
+          "INSERT INTO assets(id,name,description,state,author_id,author_display_name,created_at,updated_at) VALUES(?,?,?,'uploading',?,?,?,?)",
+        )
+        .run(
+          id,
+          metadata.name,
+          metadata.description,
+          identity.user.id,
+          identity.user.displayName,
+          now,
+          now,
+        );
+      this.store.db.exec("COMMIT");
+    } catch (error) {
+      this.rollback();
+      throw error;
+    }
     return rowAsset({
       id,
       name: metadata.name,
@@ -256,6 +264,7 @@ export class NativeAssetService {
       tempKey = randomKey();
     this.store.db.exec("BEGIN IMMEDIATE");
     try {
+      assertAuthorized();
       const asset = this.asset(id);
       if (asset.state !== "uploading") fail(409, "lifecycle_conflict");
       const counts = this.store.db
@@ -351,7 +360,7 @@ export class NativeAssetService {
       throw error;
     }
   }
-  finalize(id: string, input: unknown): NativeAsset {
+  finalize(id: string, input: unknown, assertAuthorized: () => void): NativeAsset {
     const value = input as any;
     if (
       !value ||
@@ -375,6 +384,7 @@ export class NativeAssetService {
     this.store.db.exec("BEGIN IMMEDIATE");
     let rows: any[];
     try {
+      assertAuthorized();
       const asset = this.asset(id);
       if (asset.state !== "uploading") fail(409, "lifecycle_conflict");
       const allUploads = this.store.db
@@ -419,6 +429,7 @@ export class NativeAssetService {
       this.syncDirectory(this.objects);
       this.store.db.exec("BEGIN IMMEDIATE");
       try {
+        assertAuthorized();
         const current = this.store.db.prepare("SELECT state FROM assets WHERE id=?").get(id) as
           | { state: string }
           | undefined;
@@ -459,10 +470,11 @@ export class NativeAssetService {
       throw error;
     }
   }
-  delete(id: string) {
+  delete(id: string, assertAuthorized: () => void) {
     if (!safeId.test(id)) return fail(404, "not_found");
     this.store.db.exec("BEGIN IMMEDIATE");
     try {
+      assertAuthorized();
       const asset = this.store.db.prepare("SELECT state FROM assets WHERE id=?").get(id) as
         | { state: string }
         | undefined;
@@ -483,30 +495,40 @@ export class NativeAssetService {
     if (current?.state === "deleted") return;
     this.cleanAsset(id);
   }
-  setExpiry(id: string, input: unknown) {
+  setExpiry(id: string, input: unknown, assertAuthorized: () => void) {
     const value = (input as any)?.hardExpiresAt;
     if (value !== null && (typeof value !== "string" || !Number.isFinite(Date.parse(value))))
       return fail(400, "invalid_expiry");
-    const row = this.asset(id);
-    if (row.state !== "live") return fail(409, "lifecycle_conflict");
     const timestamp = value === null ? null : Date.parse(value);
     this.store.db.exec("BEGIN IMMEDIATE");
     const updatedAt = this.now();
     try {
+      assertAuthorized();
+      const row = this.asset(id);
+      if (row.state !== "live") return fail(409, "lifecycle_conflict");
       const result = this.store.db
         .prepare("UPDATE assets SET hard_expires_at=?,updated_at=? WHERE id=? AND state='live'")
         .run(timestamp, updatedAt, id);
       if (!result.changes) fail(409, "lifecycle_conflict");
       this.store.db.exec("COMMIT");
+      return rowAsset({ ...row, hardExpiresAt: timestamp, updatedAt });
     } catch (error) {
       this.rollback();
       throw error;
     }
-    return rowAsset({ ...row, hardExpiresAt: timestamp, updatedAt });
   }
-  setVisibility(id: string, input: unknown) {
+  setVisibility(id: string, input: unknown, assertAuthorized: () => void) {
     if ((input as any)?.visibility !== "private") return fail(400, "unsupported_operation");
-    return this.get(id);
+    this.store.db.exec("BEGIN IMMEDIATE");
+    try {
+      assertAuthorized();
+      const asset = this.get(id);
+      this.store.db.exec("COMMIT");
+      return asset;
+    } catch (error) {
+      this.rollback();
+      throw error;
+    }
   }
   readFile(id: string, path: string, preview = false) {
     const row = this.asset(id, true);
