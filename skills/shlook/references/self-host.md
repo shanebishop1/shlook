@@ -47,6 +47,8 @@ shlook.home.arpa {
 ```
 
 Install Caddy's root CA on each client, or use an owned domain with a trusted certificate.
+For Node clients, if its CA store does not include Caddy's root, set
+`NODE_EXTRA_CA_CERTS=/path/to/root.crt`; configure browser trust separately.
 Never disable TLS verification. Check HTTPS and sign-in from each intended device.
 
 Add `--alias https://other-hostname` during `init` to reach the same library through another

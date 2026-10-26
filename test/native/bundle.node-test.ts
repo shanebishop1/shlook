@@ -68,6 +68,33 @@ test("walks template contents and compiles embedded dependencies inside template
   );
 });
 
+test("rejects deferred external classic scripts in every compiled HTML member", () => {
+  for (const html of [
+    '<script defer src="app.js"></script>',
+    '<script defer="false" src="app.js"></script>',
+  ]) {
+    unsupported(() => compile({ "index.html": html, "app.js": "window.ready = true" }));
+  }
+  unsupported(() =>
+    compile({
+      "index.html": '<template><script defer src="app.js"></script></template>',
+      "app.js": "window.ready = true",
+    }),
+  );
+  unsupported(() =>
+    compile({
+      "nested/page.html": '<script defer src="../app.js"></script>',
+      "index.html": "<p>entry</p>",
+      "app.js": "window.ready = true",
+    }),
+  );
+  const normal = compile({
+    "index.html": '<script src="app.js"></script>',
+    "app.js": "window.ready = true",
+  }).get("index.html")!;
+  assert.match(normal, /<script>window\.ready = true<\/script>/);
+});
+
 test("CSS parser catches escaped imports and path traversal; rejects MIME confusion and srcset escapes", () => {
   unsupported(() =>
     compile({

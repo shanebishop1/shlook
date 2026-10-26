@@ -313,6 +313,7 @@ function compileHtml(
     if (tag === "script") {
       if (a.get("type")?.trim().toLowerCase() === "module") fail("Module scripts are unsupported");
       if (a.has("src")) {
+        if (a.has("defer")) fail("Deferred classic scripts are unsupported");
         const src = a.get("src")!;
         const scriptPath = resolvePath(path, src);
         if (!/\.js$/i.test(scriptPath)) fail("Classic scripts must use the .js extension");

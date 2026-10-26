@@ -9,7 +9,9 @@ shlook verify <asset-id> --instance home --json
 - Markdown supports headings, paragraphs, lists, and fenced code. Raw HTML is escaped;
   links/images stay text. Directory Markdown stays text; no MDX.
 - Native bundles embed local classic JS/CSS, raster images, and fonts in sandboxed HTML.
-  No modules, frames, external resources, CSS imports, or runtime network access.
+  Modules, frames, CSS imports, and deferred external classic scripts are unsupported. Runtime
+  fetch/XHR and external embedded resources are blocked, but links and self-navigation are not
+  egress controls.
 - Limits: 25 MiB/file, 100 MiB/publication, 500 files. Reject symlinks and traversal.
 - Native is private-only. Cloudflare also supports explicit [public/secret sharing](privacy.md).
 
