@@ -71,6 +71,7 @@ html[data-theme="dark"] .button.primary:hover { background: var(--accent-hover);
 export function darkThemeStyles(): string {
   return `
 html[data-theme="dark"] {
+  color-scheme: dark;
   --ink: #eeede7;
   --muted: #a5aaa2;
   --faint: #20251f;

@@ -21,11 +21,11 @@ const assets: OwnerAsset[] = (["secret_link", "private", "public"] as const).map
   }),
 );
 
-async function openArchive(page: Page) {
+async function openArchive(page: Page, pageAssets: OwnerAsset[] = assets) {
   const html = ownerDocument({
-    assets,
+    assets: pageAssets,
     hasMore: false,
-    total: assets.length,
+    total: pageAssets.length,
     offset: 0,
     ownerOrigin: origin,
     privateOrigin: "https://private.example.com",
@@ -57,6 +57,57 @@ async function box(locator: Locator) {
 }
 
 for (const theme of ["light", "dark"] as const) {
+  test(`date controls follow the selected ${theme} theme rather than the OS`, async ({
+    page,
+  }, testInfo) => {
+    const opposite = theme === "dark" ? "light" : "dark";
+    await page.emulateMedia({ colorScheme: opposite, reducedMotion: "reduce" });
+    await openArchive(page);
+    await page.locator("[data-theme-toggle]").click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await page.locator(".row-action [data-inspect]").first().click();
+    const detail = page.locator("[data-detail]").first();
+    const controls = detail.locator('input[type="datetime-local"]');
+    for (const input of await controls.all()) {
+      await expect(input).toBeVisible();
+      await expect(input).toHaveCSS("color-scheme", theme);
+      await input.fill("2030-10-28T18:06");
+      await expect(input).toHaveValue("2030-10-28T18:06");
+    }
+    await detail
+      .locator(".expiry-grid")
+      .screenshot({ path: testInfo.outputPath("date-controls.png") });
+    await page.locator("[data-theme-toggle]").click();
+    for (const input of await controls.all()) {
+      await expect(input).toHaveCSS("color-scheme", opposite);
+      await expect(input).toHaveValue("2030-10-28T18:06");
+    }
+  });
+
+  for (const width of [375, 1440]) {
+    for (const count of [0, 1, 24]) {
+      test(`footer follows ${count} artifacts at ${width}px in ${theme} mode`, async ({ page }) => {
+        const height = 1000;
+        await page.setViewportSize({ width, height });
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+        const pageAssets = Array.from({ length: count }, (_, index) => ({
+          ...assets[0]!,
+          id: `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`,
+          name: `Artifact ${index + 1}`,
+        }));
+        await openArchive(page, pageAssets);
+        const footer = await box(page.locator(".owner-footer"));
+        const main = await box(page.locator("main"));
+        const scrollHeight = await page.locator("html").evaluate((element) => element.scrollHeight);
+        expect(footer.y).toBeGreaterThanOrEqual(main.y + main.height - 1);
+        expect(footer.y + footer.height).toBeCloseTo(scrollHeight, 0);
+        if (count < 2) expect(footer.y + footer.height).toBeCloseTo(height, 0);
+        else expect(footer.y).toBeGreaterThan(height);
+        await expect(page.locator(".owner-footer")).toHaveCSS("position", "static");
+      });
+    }
+  }
+
   for (const width of [320, 375, 520, 640, 768, 900, 901, 960, 1024, 1080, 1081, 1180, 1440]) {
     test(`archive controls fit at ${width}px in ${theme} mode`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 });

@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { request as httpRequest, type Server as HttpServer } from "node:http";
@@ -204,6 +204,9 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         await page.locator("[data-upload-close]").click();
       }
       await page.locator("[data-upload-open]").click();
+      await expect(page.locator("input[webkitdirectory], [data-directory-picker]")).toHaveCount(0);
+      await expect(page.locator("[data-upload-input]")).not.toHaveAttribute("multiple", /.*/);
+      await expect(page.getByText("Static folder", { exact: true })).toHaveCount(0);
     };
     const rowFor = (name: string) =>
       page
@@ -215,23 +218,46 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       await row.locator(".row-action [data-inspect]").click();
       return page.locator(`[data-detail="${id}"]`);
     };
-    const upload = async (
+    // Bundles remain API/CLI capabilities; the browser uses the original
+    // single-file dialog. Seed bundle fixtures through the authenticated API.
+    const publishBundle = async (
       name: string,
       files: Array<{ name: string; mimeType: string; buffer: Buffer }>,
     ) => {
-      await openUpload();
-      const folder = join(directory, `fixture-${name}`);
-      mkdirSync(folder);
+      const headers = { Authorization: `Bearer ${publisher.secret}` };
+      const created = await context!.request.post(`${httpsOrigin}/api/assets`, {
+        headers,
+        data: { name },
+      });
+      expect(created.status()).toBe(201);
+      const { asset } = await created.json();
+      const manifest: Array<{ path: string; uploadId: string }> = [];
+      const put = async (path: string, bytes: Buffer) => {
+        const uploaded = await context!.request.put(
+          `${httpsOrigin}/api/assets/${asset.id}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+          { headers: { ...headers, "Content-Type": "application/octet-stream" }, data: bytes },
+        );
+        expect(uploaded.status()).toBe(201);
+        manifest.push((await uploaded.json()).file);
+      };
       for (const file of files) {
-        const path = join(folder, file.name);
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, file.buffer);
+        await put(`fixture-${name}/${file.name}`, file.buffer);
       }
-      await page.locator("input[webkitdirectory]").setInputFiles(folder);
-      await page.locator("[data-upload-name]").fill(name);
-      await page.locator("[data-upload-submit]").click();
-      await expect(page.locator("[data-upload-result]")).toBeVisible();
-      await page.locator("[data-upload-close]").click();
+      if (files.every((file) => /\.(?:md|mdx)$/i.test(file.name))) {
+        await put(
+          "index.html",
+          Buffer.from("<!doctype html><p>Directory Markdown is preserved as inert downloads.</p>"),
+        );
+      }
+      const entrypoint = manifest.find((file) => /(?:^|\/)index\.html$/.test(file.path))!.path;
+      const finalized = await context!.request.post(
+        `${httpsOrigin}/api/assets/${asset.id}/finalize`,
+        {
+          headers,
+          data: { entrypoint, files: manifest },
+        },
+      );
+      expect(finalized.status()).toBe(200);
       await page.reload();
     };
     const uploadSingle = async (name: string, fileName: string, buffer: Buffer) => {
@@ -244,7 +270,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       await page.locator("[data-upload-name]").fill(name);
       await page.locator("[data-upload-submit]").click();
     };
-    await upload("bundle", [
+    await publishBundle("bundle", [
       {
         name: "index.html",
         mimeType: "text/html",
@@ -273,7 +299,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         ),
       },
     ]);
-    await upload("notes", [
+    await publishBundle("notes", [
       { name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Notes\n\nhello") },
     ]);
     const inertDirectoryMarkdown = store!.db
@@ -571,7 +597,7 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     await page.getByRole("link", { name: "Open private archive" }).click();
     await expect(page.getByRole("heading", { name: "Artifact archive" })).toBeVisible();
     await expect(page).toHaveURL(`${httpsOrigin}/archive`);
-    await upload("attack", [
+    await publishBundle("attack", [
       {
         name: "index.html",
         mimeType: "text/html",
