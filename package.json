@@ -9,7 +9,8 @@
     "url": "git+https://github.com/shanebishop1/shlook.git"
   },
   "bin": {
-    "shlook": "dist/cli.js"
+    "shlook": "dist/cli.js",
+    "shlook-server": "dist/native/main.js"
   },
   "files": [
     "dist",
@@ -38,8 +39,9 @@
     "tag": "latest"
   },
   "scripts": {
-    "build": "pnpm build:worker && pnpm build:cli",
+    "build": "pnpm build:worker && pnpm build:cli && pnpm build:server",
     "build:cli": "tsc --project tsconfig.cli.build.json",
+    "build:server": "tsc --project tsconfig.server.json && node -e \"require('node:fs').chmodSync('dist/native/main.js', 0o755)\"",
     "build:worker": "wrangler deploy --dry-run --outdir /tmp/shlook-worker",
     "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test",
     "ci": "pnpm check && pnpm test:browser && pnpm build",
@@ -47,13 +49,14 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint src",
-    "prepack": "pnpm build:cli",
-    "test": "vitest run && node --test src/cli-files.node-check.ts test/client-archive.node-test.ts",
+    "prepack": "pnpm build:cli && pnpm build:server",
+    "test": "vitest run && node --test src/cli-files.node-check.ts test/client-archive.node-test.ts test/native/*.node-test.ts",
     "test:browser": "playwright test",
-    "typecheck": "pnpm typecheck:worker && pnpm typecheck:cli && pnpm typecheck:browser",
+    "typecheck": "pnpm typecheck:worker && pnpm typecheck:cli && pnpm typecheck:browser && pnpm typecheck:server",
     "typecheck:browser": "tsc --project tsconfig.browser.json",
     "typecheck:cli": "tsc --project tsconfig.cli.json",
-    "typecheck:worker": "tsc --project tsconfig.worker.json"
+    "typecheck:worker": "tsc --project tsconfig.worker.json",
+    "typecheck:server": "tsc --project tsconfig.server.json --noEmit"
   },
   "dependencies": {
     "parse5": "8.0.1",

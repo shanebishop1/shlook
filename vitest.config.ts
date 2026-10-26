@@ -12,6 +12,7 @@ export default defineConfig(async () => {
       exclude: [
         "**/node_modules/**",
         "**/.git/**",
+        "**/.worktrees/**",
         "**/dist/**",
         "**/coverage/**",
         "test/browser/**",
