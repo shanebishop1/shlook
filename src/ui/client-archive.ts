@@ -7,6 +7,7 @@ const closeConfirmation = (confirmation) => {
 };
 const selectedItems = () => [...document.querySelectorAll('[data-select-item]:checked')];
 const syncSelection = () => {
+  if (!batchDelete) return;
   const selected = selectedItems();
   batchDelete.hidden = !selectMode || selected.length === 0;
   batchDelete.disabled = selected.length === 0;
@@ -22,7 +23,7 @@ const setSelectMode = (enabled) => {
   if (!enabled) document.querySelectorAll('[data-select-item]').forEach((item) => { item.checked = false; });
   syncSelection();
 };
-const uploadVisibility = () => uploadForm.querySelector('[name="upload-visibility"]:checked').value;
+const uploadVisibility = () => uploadForm?.querySelector('[name="upload-visibility"]:checked')?.value ?? 'private';
 const cardForId = (id) => document.querySelector('[data-detail="' + id + '"]');
 const loadPreviewFrame = (frame) => {
   const media = frame.parentElement;
@@ -78,7 +79,9 @@ const showPreviewFallback = (image) => {
 };
 const bindPreviewImages = (root = document) => root.querySelectorAll('[data-preview-image]').forEach((image) => {
   image.addEventListener('error', () => showPreviewFallback(image), { once: true });
-  if (image.complete && image.naturalWidth === 0) showPreviewFallback(image);
+  if (image.hasAttribute('data-preview-entrypoint')) {
+    resolvePreview(image).catch(() => { image.alt = 'Preview unavailable'; });
+  } else if (image.complete && image.naturalWidth === 0) showPreviewFallback(image);
 });
 const releaseDetailPreview = (detail) => {
   if (innerWidth >= 901) return;
@@ -133,7 +136,7 @@ const setMenuValue = (menu, value) => {
 };
 const filterRecords = () => {
   const query = document.querySelector('[data-search]').value.trim().toLowerCase();
-  const visibility = filterMenu.dataset.value;
+  const visibility = filterMenu?.dataset.value ?? 'all';
   let visible = 0;
   for (const row of records) {
     const match = (!query || row.dataset.search.includes(query)) && (visibility === 'all' || row.dataset.visibility === visibility);
@@ -178,7 +181,7 @@ const refreshArchive = async (path = '/', historyMode = 'replace') => {
     records.splice(0, records.length, ...document.querySelectorAll('[data-record]'));
     initializeArchiveRows(nextBody);
     document.querySelector('input[data-search]').value = '';
-    setMenuValue(filterMenu, 'all');
+    if (filterMenu) setMenuValue(filterMenu, 'all');
     filterRecords();
     if (historyMode === 'push') history.pushState(null, '', archivePath);
     else if (historyMode === 'replace') history.replaceState(null, '', archivePath);

@@ -1,9 +1,9 @@
 export function initClientScript(): string {
   return `
-uploadOpen.addEventListener('click', openUpload);
-uploadClose.addEventListener('click', closeUpload);
-selectToggle.addEventListener('click', () => setSelectMode(!selectMode));
-batchDelete.addEventListener('click', async () => {
+uploadOpen?.addEventListener('click', openUpload);
+uploadClose?.addEventListener('click', closeUpload);
+selectToggle?.addEventListener('click', () => setSelectMode(!selectMode));
+batchDelete?.addEventListener('click', async () => {
   const items = selectedItems();
   if (items.length === 0) return;
   openActionConfirmation('Delete ' + items.length + ' selected ' + (items.length === 1 ? 'artifact' : 'artifacts') + '?', 'These artifacts and their files will be removed permanently.', async () => {
@@ -29,7 +29,7 @@ const closeActionConfirmation = () => {
   actionConfirm.hidden = true;
   pendingAction = undefined;
   document.body.classList.remove('confirm-open');
-  batchDelete.focus();
+  (batchDelete || document.querySelector('[data-theme-toggle]')).focus();
 };
 actionConfirm.addEventListener('keydown', (event) => trapDialogFocus(actionConfirm, event));
 actionConfirm.addEventListener('click', (event) => event.stopPropagation());
@@ -41,8 +41,8 @@ actionConfirm.querySelector('[data-action-confirm-submit]').addEventListener('cl
   try { closeActionConfirmation(); await action(); }
   finally { actionConfirm.querySelector('[data-action-confirm-submit]').disabled = false; }
 });
-uploadDialog.addEventListener('click', (event) => { event.stopPropagation(); });
-uploadDialog.addEventListener('keydown', (event) => trapDialogFocus(uploadDialog, event));
+uploadDialog?.addEventListener('click', (event) => { event.stopPropagation(); });
+uploadDialog?.addEventListener('keydown', (event) => trapDialogFocus(uploadDialog, event));
 document.addEventListener('click', async (event) => {
   const request = event.target.closest('[data-request-delete]');
   if (request) {
@@ -84,8 +84,8 @@ document.addEventListener('click', async (event) => {
     closeConfirmation(confirmation);
   }
 }, true);
-uploadInput.required = false;
-uploadInput.addEventListener('change', () => chooseUploadFile(uploadInput.files && uploadInput.files[0]));
+if (uploadInput) uploadInput.required = false;
+uploadInput?.addEventListener('change', () => chooseUploadFiles(uploadInput.files));
 document.addEventListener('click', (event) => {
   if (!selectMode) return;
   const row = event.target.closest('[data-record]');
@@ -96,29 +96,30 @@ document.addEventListener('click', (event) => {
   event.preventDefault();
   event.stopImmediatePropagation();
 }, true);
-['dragenter', 'dragover'].forEach((type) => dropZone.addEventListener(type, (event) => {
+['dragenter', 'dragover'].forEach((type) => dropZone?.addEventListener(type, (event) => {
   event.preventDefault();
   dropZone.classList.add('is-dragging');
 }));
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('is-dragging'));
+dropZone?.addEventListener('dragleave', () => dropZone.classList.remove('is-dragging'));
 document.addEventListener('dragover', (event) => {
-  if (!uploadDragHasFile(event.dataTransfer)) return;
+  if (!uploadForm || !uploadDragHasFile(event.dataTransfer)) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'copy';
 });
 document.addEventListener('drop', (event) => {
-  if (!uploadDragHasFile(event.dataTransfer)) return;
+  if (!uploadForm || !uploadDragHasFile(event.dataTransfer)) return;
   event.preventDefault();
   dropZone.classList.remove('is-dragging');
   if (uploadBusy) return;
   const file = uploadFileFromDrop(event.dataTransfer);
   resetUpload();
   if (uploadDialog.hidden) openUpload();
-  if (file) chooseUploadFile(file);
+  if (file) chooseUploadFiles(event.dataTransfer.files?.length ? event.dataTransfer.files : [file]);
   else setUploadStatus('That drag did not include a usable file. Try choosing it instead.', true);
 });
-uploadForm.addEventListener('submit', async (event) => {
+uploadForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (uploadBusy) return;
   const file = selectedUploadFile;
   if (!file) {
     setUploadStatus('Choose a file first.', true);
@@ -135,30 +136,8 @@ uploadForm.addEventListener('submit', async (event) => {
   uploadConfig.hidden = true;
   uploadResult.hidden = true;
   uploadProgress.hidden = false;
-  let id;
   try {
-    setUploadProgress('Creating upload...');
-    const created = await ownerRequest('/api/assets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: uploadName.value.trim() || uploadName.dataset.fallback, description: uploadDescription.value.trim() || null }) });
-    id = created.asset && created.asset.id;
-    if (typeof id !== 'string') throw new Error('Create response did not include an asset ID.');
-    setUploadProgress('Uploading ' + file.name + '...');
-    const uploaded = await ownerRequest('/api/assets/' + id + '/files/' + encodeURIComponent(file.name), { method: 'PUT', headers: { 'content-type': file.type || 'application/octet-stream' }, body: file });
-    if (!uploaded.file || typeof uploaded.file.uploadId !== 'string') throw new Error('Upload response did not include a file ID.');
-    setUploadProgress('Finishing upload...');
-    await ownerRequest('/api/assets/' + id + '/finalize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ entrypoint: file.name, files: [uploaded.file] }) });
-    const visibility = uploadVisibility();
-    let resultUrl = uploadForm.dataset.privateOrigin + '/assets/' + id + '/';
-    let resultLabel = 'Private URL ready';
-    if (visibility === 'public') {
-      await ownerRequest('/api/assets/' + id + '/visibility', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ visibility: 'public' }) });
-      resultUrl = uploadForm.dataset.publicOrigin + '/assets/' + id + '/';
-      resultLabel = 'Public URL ready';
-    } else if (visibility === 'secret_link') {
-      const secret = await ownerRequest('/api/assets/' + id + '/secret?mode=create', { method: 'POST' });
-      if (typeof secret.url !== 'string') throw new Error('Secret-link response did not include a URL.');
-      resultUrl = secret.url;
-      resultLabel = 'Secret URL ready';
-    }
+    const { resultUrl, resultLabel } = await publishUpload(file);
     try { await refreshArchive(); } catch {}
     uploadResultUrl.href = resultUrl;
     uploadResultUrl.textContent = resultUrl;
@@ -169,7 +148,6 @@ uploadForm.addEventListener('submit', async (event) => {
     uploadResult.hidden = false;
     uploadForm.querySelector('[data-upload-copy]').focus();
   } catch (error) {
-    if (id) try { await ownerRequest('/api/assets/' + id, { method: 'DELETE' }); } catch {}
     uploadForm.dataset.step = 'options';
     uploadProgress.hidden = true;
     uploadConfig.hidden = false;
@@ -181,7 +159,7 @@ uploadForm.addEventListener('submit', async (event) => {
     uploadSubmit.disabled = false;
   }
 });
-uploadForm.querySelector('[data-upload-copy]').addEventListener('click', async () => {
+uploadForm?.querySelector('[data-upload-copy]').addEventListener('click', async () => {
   try {
     await copyText(uploadResultUrl.href);
     uploadForm.querySelector('[data-upload-result-label]').textContent = 'URL copied.';
@@ -189,7 +167,7 @@ uploadForm.querySelector('[data-upload-copy]').addEventListener('click', async (
     uploadForm.querySelector('[data-upload-result-label]').textContent = error instanceof Error ? error.message : 'Copy failed.';
   }
 });
-uploadForm.querySelector('[data-upload-again]').addEventListener('click', () => { resetUpload(); requestAnimationFrame(() => uploadDialog.focus()); });
+uploadForm?.querySelector('[data-upload-again]').addEventListener('click', () => { resetUpload(); requestAnimationFrame(() => uploadDialog.focus()); });
 document.querySelector('[data-search]').addEventListener('input', filterRecords);
 document.addEventListener('click', (event) => {
   const link = event.target.closest('.pagination a');
@@ -203,7 +181,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     const confirmation = document.querySelector('[data-confirm]:not([hidden])');
     if (confirmation) { closeConfirmation(confirmation); return; }
-    if (!uploadDialog.hidden) { closeUpload(); return; }
+    if (uploadDialog && !uploadDialog.hidden) { closeUpload(); return; }
     closeMenus();
     menu?.querySelector('[data-menu-button]')?.focus();
     return;
@@ -295,21 +273,21 @@ document.addEventListener('click', async (event) => {
         card.querySelector('[data-secret="revoke"]').hidden = false;
       }
     } else if (button.hasAttribute('data-expiry')) {
-      const value = (input) => input.value ? new Date(input.value).toISOString() : null;
+      const value = (input) => input?.value ? new Date(input.value).toISOString() : null;
       const hard = value(card.querySelector('[data-hard-expiry]'));
       if (hard) {
         openActionConfirmation('Apply permanent expiration?', 'The artifact and its files will be deleted at the selected time.', async () => {
-          await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: value(card.querySelector('[data-share-expiry]')), hardExpiresAt: hard }) });
+          await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: card.querySelector('[data-share-expiry]') ? value(card.querySelector('[data-share-expiry]')) : undefined, hardExpiresAt: hard }) });
           setStatus(card, 'Expiration policy updated.');
           setTimeout(() => location.reload(), 500);
         });
         return;
       }
-      await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: value(card.querySelector('[data-share-expiry]')), hardExpiresAt: hard }) });
+      await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: card.querySelector('[data-share-expiry]') ? value(card.querySelector('[data-share-expiry]')) : undefined, hardExpiresAt: hard }) });
       setStatus(card, 'Expiration policy updated.');
       setTimeout(() => location.reload(), 500);
     } else if (button.hasAttribute('data-clear-expiry')) {
-      await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: null, hardExpiresAt: null }) });
+      await mutate(card, '/expiry', { method: 'PATCH', body: JSON.stringify({ shareExpiresAt: card.querySelector('[data-share-expiry]') ? null : undefined, hardExpiresAt: null }) });
       setStatus(card, 'Expirations cleared.');
       setTimeout(() => location.reload(), 350);
     } else if (button.hasAttribute('data-copy-public')) {

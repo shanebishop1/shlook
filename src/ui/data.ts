@@ -2,7 +2,8 @@ import { hashSecret } from "../worker/privacy";
 import { decryptSecret } from "../worker/secret-crypto";
 import type { OwnerAsset, OwnerAssetRow } from "./types";
 
-export const pageSize = 24;
+import { pageSize } from "./options.ts";
+export { pageSize } from "./options.ts";
 
 export async function readOwnerAssets(
   db: D1Database,

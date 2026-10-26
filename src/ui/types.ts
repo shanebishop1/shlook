@@ -1,4 +1,5 @@
 export interface OwnerAsset {
+  author?: { id: string; displayName: string };
   id: string;
   name: string;
   description: string | null;
