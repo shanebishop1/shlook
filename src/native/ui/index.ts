@@ -109,7 +109,7 @@ export function createNativeUiHandler(options: NativeUiOptions = {}) {
           delete: publisher,
           hardExpiry: publisher,
           sharing: false,
-          directories: true,
+          directories: false,
           resolvePreviewEntrypoint: true,
         },
         logout: true,

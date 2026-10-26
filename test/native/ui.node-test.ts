@@ -61,7 +61,9 @@ test("native archive reuses canonical markup/styles, escapes attribution and use
   assert.equal(document.querySelector("[data-count]")?.textContent, "1 on this page");
   assert.equal(document.querySelector(".pagination a")?.getAttribute("href"), "/?offset=100");
   assert.ok(document.querySelector("[data-upload-open]"));
-  assert.ok(document.querySelector("input[webkitdirectory]"));
+  assert.equal(document.querySelector("input[webkitdirectory]"), null);
+  assert.equal(document.querySelector("[data-directory-picker]"), null);
+  assert.equal(document.querySelector("[data-upload-input]")?.hasAttribute("multiple"), false);
   assert.ok(document.querySelector("[data-hard-expiry]"));
   assert.equal(
     document.querySelector(

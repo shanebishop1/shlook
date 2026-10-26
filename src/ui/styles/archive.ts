@@ -1,5 +1,7 @@
 export function archiveStyles(): string {
   return `
+body.owner-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+.owner-page > .masthead, .owner-page > main { flex-shrink: 0; }
 .brand { color: inherit; text-decoration: none; }
 body.confirm-open { overflow: hidden; }
 .delete-button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
@@ -19,6 +21,7 @@ body.confirm-open { overflow: hidden; }
 .confirm-eyebrow { color: var(--danger); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .confirm-card .button-row { margin-top: 20px; }
 .owner-footer {
+  margin-top: auto; flex-shrink: 0;
   min-height: 72px; display: flex; align-items: center; justify-content: center;
   gap: 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px;
 }
