@@ -11,6 +11,7 @@ import {
   verifyCsrf,
 } from "./auth.ts";
 import type { NativeStore, Role } from "./store.ts";
+import { sanitizeReturnPath } from "./login-redirect.ts";
 
 type Bucket = { started: number; failures: number };
 export class AuthThrottle {
@@ -100,11 +101,21 @@ function json(response: ServerResponse, status: number, value: unknown) {
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "private, no-store");
   response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Referrer-Policy", "no-referrer");
   response.end(JSON.stringify(value));
 }
 function sessionCookie(id: string, expiresAt: number, now = Date.now()) {
   const maxAge = Math.max(0, Math.floor((expiresAt - now) / 1000));
   return `__Host-shlook_session=${id}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Expires=${new Date(expiresAt).toUTCString()}`;
+}
+function requestSessionId(request: IncomingMessage): string | undefined {
+  const cookies = (request.headers.cookie ?? "")
+    .split(";")
+    .map((cookie) => cookie.trim())
+    .filter((cookie) => cookie.split("=", 1)[0] === "__Host-shlook_session");
+  // Do not authenticate a valid prefix of a malformed value or ambiguous duplicate cookies.
+  if (cookies.length !== 1) return undefined;
+  return /^__Host-shlook_session=([A-Za-z0-9_-]{43})$/.exec(cookies[0]!)?.[1];
 }
 function routePath(request: IncomingMessage) {
   try {
@@ -140,6 +151,19 @@ function fetchMetadataAllowed(request: IncomingMessage, path: string) {
   if (site && site !== "same-origin") return false;
   return true;
 }
+function loginRedirectAllowed(request: IncomingMessage, matched: MatchedOrigin): boolean {
+  const path = routePath(request);
+  return (
+    matched.secure &&
+    request.headers.authorization === undefined &&
+    request.headers.origin === undefined &&
+    (request.method === "GET" || request.method === "HEAD") &&
+    request.headers["sec-fetch-mode"] === "navigate" &&
+    request.headers["sec-fetch-dest"] === "document" &&
+    path !== "/login" &&
+    recognizedDocumentRoute(path)
+  );
+}
 function boundary(
   request: IncomingMessage,
   store: NativeStore,
@@ -165,25 +189,15 @@ function boundary(
     }
     return { identity, kind: "bearer" };
   }
+  if (path === "/api/session" && request.method === "POST") return { kind: "login" };
+  if (!matched.secure) return { status: 401 };
   if (path === "/login" && request.method === "GET") return { kind: "public" };
   if (["/ui/app.js", "/ui/style.css"].includes(path) && request.method === "GET")
     return { kind: "public" };
-  if (path === "/api/session" && request.method === "POST") return { kind: "login" };
-  const cookie = request.headers.cookie?.match(
-    /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
-  )?.[1];
-  if (!cookie) {
-    if ((path === "/" || path === "/archive") && request.method === "GET")
-      return { kind: "public" };
-    return { status: 401 };
-  }
-  if (!matched.secure) return { status: 401 };
+  const cookie = requestSessionId(request);
+  if (!cookie) return { status: 401 };
   const session = authenticateSession(store, cookie, now);
-  if (!session) {
-    if ((path === "/" || path === "/archive") && request.method === "GET")
-      return { kind: "public" };
-    return { status: 401 };
-  }
+  if (!session) return { status: 401 };
   if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "GET")) {
     if (
       origin !== matched.origin ||
@@ -276,6 +290,18 @@ export function createNativeServer(options: NativeServerOptions): Server {
       }
       const result = boundary(request, options.store, matched, throttle, Date.now());
       if ("status" in result) {
+        if (result.status === 401 && loginRedirectAllowed(request, matched)) {
+          response.statusCode = 302;
+          response.setHeader(
+            "Location",
+            `/login?return=${encodeURIComponent(sanitizeReturnPath(request.url))}`,
+          );
+          response.setHeader("Cache-Control", "private, no-store");
+          response.setHeader("X-Content-Type-Options", "nosniff");
+          response.setHeader("Referrer-Policy", "no-referrer");
+          response.end();
+          return;
+        }
         if (result.retryAfter) response.setHeader("Retry-After", String(result.retryAfter));
         json(response, result.status, {
           error:
@@ -293,9 +319,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
         if (!ended) {
           ended = true;
           if (result.kind === "cookie" && response.statusCode >= 200 && response.statusCode < 400) {
-            const cookie = request.headers.cookie?.match(
-              /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
-            )?.[1];
+            const cookie = requestSessionId(request);
             const renewed = cookie ? renewSession(options.store, cookie) : null;
             if (renewed && !response.headersSent)
               response.setHeader("Set-Cookie", sessionCookie(cookie!, renewed.expiresAt));
@@ -329,9 +353,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
             return;
           }
           authenticated = true;
-          const existing = request.headers.cookie?.match(
-            /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
-          )?.[1];
+          const existing = requestSessionId(request);
           if (existing)
             options.store.db
               .prepare("DELETE FROM sessions WHERE session_hash=?")
@@ -376,9 +398,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
         routePath(request) === "/api/session" &&
         result.kind === "cookie"
       ) {
-        const cookie = request.headers.cookie?.match(
-          /(?:^|;\s*)__Host-shlook_session=([A-Za-z0-9_-]+)/,
-        )?.[1];
+        const cookie = requestSessionId(request);
         if (cookie)
           options.store.db
             .prepare("DELETE FROM sessions WHERE session_hash=?")
