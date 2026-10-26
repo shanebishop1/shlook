@@ -589,10 +589,6 @@ test(
         0,
         "second data directory has no cross-instance publications",
       );
-      browser = await chromium.launchPersistentContext(browserProfile, {
-        headless: true,
-        ignoreHTTPSErrors: true,
-      });
       const aliasLogin = await browser.newPage();
       await aliasLogin.goto(`${alias}/login`);
       await aliasLogin.locator('input[type="password"]').fill(aliasToken);
