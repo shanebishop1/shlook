@@ -1,4 +1,4 @@
-export function uploadClientScript(): string {
+export function uploadClientScript(uploadScript?: string): string {
   return `
 const setUploadStatus = (message, error = false) => {
   uploadStatus.textContent = message;
@@ -27,7 +27,9 @@ const resetUpload = () => {
   uploadProgress.hidden = true;
   uploadResult.hidden = true;
   uploadSubmit.disabled = true;
-  uploadForm.querySelector('[name="upload-visibility"][value="private"]').checked = true;
+  const privateOption = uploadForm.querySelector('[name="upload-visibility"][value="private"]');
+  if (privateOption) privateOption.checked = true;
+  uploadForm.querySelectorAll('input[type="file"]').forEach((input) => { input.value = ''; });
   setUploadStatus('');
 };
 const closeUpload = () => {
@@ -87,5 +89,42 @@ const chooseUploadFile = (file) => {
   uploadResult.hidden = true;
   setUploadStatus('');
   requestAnimationFrame(() => uploadConfig.querySelector('h2').focus());
+};
+${uploadScript ?? defaultUploadScript()}`;
+}
+
+function defaultUploadScript(): string {
+  return `
+const chooseUploadFiles = (files) => chooseUploadFile(files && files[0]);
+const publishUpload = async (file) => {
+  let id;
+  try {
+    setUploadProgress('Creating upload...');
+    const created = await ownerRequest('/api/assets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: uploadName.value.trim() || uploadName.dataset.fallback, description: uploadDescription.value.trim() || null }) });
+    id = created.asset && created.asset.id;
+    if (typeof id !== 'string') throw new Error('Create response did not include an asset ID.');
+    setUploadProgress('Uploading ' + file.name + '...');
+    const uploaded = await ownerRequest('/api/assets/' + id + '/files/' + encodeURIComponent(file.name), { method: 'PUT', headers: { 'content-type': file.type || 'application/octet-stream' }, body: file });
+    if (!uploaded.file || typeof uploaded.file.uploadId !== 'string') throw new Error('Upload response did not include a file ID.');
+    setUploadProgress('Finishing upload...');
+    await ownerRequest('/api/assets/' + id + '/finalize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ entrypoint: file.name, files: [uploaded.file] }) });
+    const visibility = uploadVisibility();
+    let resultUrl = uploadForm.dataset.privateOrigin + '/assets/' + id + '/';
+    let resultLabel = 'Private URL ready';
+    if (visibility === 'public') {
+      await ownerRequest('/api/assets/' + id + '/visibility', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ visibility: 'public' }) });
+      resultUrl = uploadForm.dataset.publicOrigin + '/assets/' + id + '/';
+      resultLabel = 'Public URL ready';
+    } else if (visibility === 'secret_link') {
+      const secret = await ownerRequest('/api/assets/' + id + '/secret?mode=create', { method: 'POST' });
+      if (typeof secret.url !== 'string') throw new Error('Secret-link response did not include a URL.');
+      resultUrl = secret.url;
+      resultLabel = 'Secret URL ready';
+    }
+    return { resultUrl, resultLabel };
+  } catch (error) {
+    if (id) try { await ownerRequest('/api/assets/' + id, { method: 'DELETE' }); } catch {}
+    throw error;
+  }
 };`;
 }

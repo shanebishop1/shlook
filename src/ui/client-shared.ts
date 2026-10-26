@@ -1,4 +1,4 @@
-export function sharedClientScript(): string {
+export function sharedClientScript(requestScript?: string): string {
   return `
 const records = [...document.querySelectorAll('[data-record]')];
 const count = document.querySelector('[data-count]');
@@ -11,20 +11,20 @@ const uploadDialog = document.querySelector('[data-upload-dialog]');
 const uploadOpen = document.querySelector('[data-upload-open]');
 const uploadClose = document.querySelector('[data-upload-close]');
 const uploadForm = document.querySelector('[data-upload-form]');
-const uploadConfig = uploadForm.querySelector('[data-upload-config]');
-const uploadInput = uploadForm.querySelector('[data-upload-input]');
-const uploadName = uploadForm.querySelector('[data-upload-name]');
-const uploadDescription = uploadForm.querySelector('[data-upload-description]');
-const uploadSubmit = uploadForm.querySelector('[data-upload-submit]');
-const uploadStatus = uploadForm.querySelector('[data-upload-status]');
-const uploadResult = uploadForm.querySelector('[data-upload-result]');
-const uploadResultUrl = uploadForm.querySelector('[data-upload-result-url]');
-const uploadProgress = uploadForm.querySelector('[data-upload-progress]');
-const uploadProgressLabel = uploadForm.querySelector('[data-upload-progress-label]');
-const dropZone = uploadForm.querySelector('[data-drop-zone]');
+const uploadConfig = uploadForm?.querySelector('[data-upload-config]');
+const uploadInput = uploadForm?.querySelector('[data-upload-input]');
+const uploadName = uploadForm?.querySelector('[data-upload-name]');
+const uploadDescription = uploadForm?.querySelector('[data-upload-description]');
+const uploadSubmit = uploadForm?.querySelector('[data-upload-submit]');
+const uploadStatus = uploadForm?.querySelector('[data-upload-status]');
+const uploadResult = uploadForm?.querySelector('[data-upload-result]');
+const uploadResultUrl = uploadForm?.querySelector('[data-upload-result-url]');
+const uploadProgress = uploadForm?.querySelector('[data-upload-progress]');
+const uploadProgressLabel = uploadForm?.querySelector('[data-upload-progress-label]');
+const dropZone = uploadForm?.querySelector('[data-drop-zone]');
 const selectToggle = document.querySelector('[data-select-toggle]');
-const selectIcon = selectToggle.querySelector('[data-select-icon]');
-const selectDone = selectToggle.querySelector('[data-select-done]');
+const selectIcon = selectToggle?.querySelector('[data-select-icon]');
+const selectDone = selectToggle?.querySelector('[data-select-done]');
 const batchDelete = document.querySelector('[data-batch-delete]');
 const actionConfirm = document.querySelector('[data-action-confirm]');
 let selectedUploadFile;
@@ -79,10 +79,19 @@ const copyText = async (text) => {
 
 const mutate = async (card, path, init) => {
   setStatus(card, 'Working...');
-  const response = await fetch('/api/assets/' + card.dataset.detail + path, {
+  const body = await ownerRequest('/api/assets/' + card.dataset.detail + path, {
     ...init,
     headers: { 'content-type': 'application/json', ...(init.headers || {}) },
   });
+  if (typeof body.url === 'string') card.dataset.secretUrl = body.url;
+  if (path === '/secret' && init.method === 'DELETE') card.dataset.secretUrl = '';
+  return body;
+};
+
+${
+  requestScript ??
+  `const ownerRequest = async (path, init = {}) => {
+  const response = await fetch(path, init);
   let body = {};
   try { body = await response.json(); } catch {}
   if (!response.ok) {
@@ -91,19 +100,7 @@ const mutate = async (card, path, init) => {
     failure.code = code;
     throw failure;
   }
-  if (typeof body.url === 'string') card.dataset.secretUrl = body.url;
-  if (path === '/secret' && init.method === 'DELETE') card.dataset.secretUrl = '';
   return body;
-};
-
-const ownerRequest = async (path, init = {}) => {
-  const response = await fetch(path, init);
-  let body = {};
-  try { body = await response.json(); } catch {}
-  if (!response.ok) {
-    const code = body.error || ('request_failed_' + response.status);
-    throw new Error(errorMessage(code));
-  }
-  return body;
-};`;
+};`
+}`;
 }

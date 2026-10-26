@@ -1,5 +1,6 @@
 export function uploadStyles(): string {
   return `
+.upload-form:not([data-step="file"]) [data-directory-picker] { display: none; }
 .upload-card { margin: 0 0 30px; border: 1px solid var(--line-strong); background: var(--white); box-shadow: 0 8px 24px #3b31240a; }
 .upload-form { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); }
 .drop-zone {

@@ -4,6 +4,55 @@ import { request as nativeRequest } from "node:http";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
 import { close, fixture, listen, request } from "./helpers.ts";
+import { authenticateToken, createSession } from "../../src/native/auth.ts";
+import { checkRequestBoundary, revalidateAuthorizedRequest } from "../../src/native/server.ts";
+import type { IncomingMessage } from "node:http";
+
+test("browser redirect handling never converts stale-session auth rechecks into authorization", () => {
+  const f = fixture();
+  try {
+    const now = Date.now();
+    const identity = authenticateToken(f.store, f.token, now)!;
+    const session = createSession(f.store, identity, now);
+    const incoming = {
+      method: "GET",
+      url: "/assets/12345678-1234-1234-1234-123456789abc/index.html",
+      headers: {
+        host: "owner.example",
+        cookie: `__Host-shlook_session=${session.id}`,
+        "sec-fetch-site": "none",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as IncomingMessage;
+    const original = checkRequestBoundary(incoming, f.store, f.config, undefined, now);
+    assert.ok("identity" in original);
+    assert.equal(revalidateAuthorizedRequest(incoming, f.store, f.config, original, now), true);
+    incoming.headers.cookie += "!";
+    assert.equal(revalidateAuthorizedRequest(incoming, f.store, f.config, original, now), false);
+    incoming.headers.cookie = `__Host-shlook_session=${session.id}`;
+    assert.equal(
+      revalidateAuthorizedRequest(incoming, f.store, f.config, original, session.expiresAt),
+      false,
+    );
+    assert.deepEqual(checkRequestBoundary(incoming, f.store, f.config, undefined, now), {
+      status: 401,
+    });
+    const replacement = createSession(f.store, identity, now);
+    incoming.headers.cookie = `__Host-shlook_session=${replacement.id}`;
+    assert.equal(revalidateAuthorizedRequest(incoming, f.store, f.config, original, now), true);
+    f.store.revokeToken(identity.tokenId);
+    assert.equal(revalidateAuthorizedRequest(incoming, f.store, f.config, original, now), false);
+    assert.deepEqual(checkRequestBoundary(incoming, f.store, f.config, undefined, now), {
+      status: 401,
+    });
+  } finally {
+    f.app.dispose();
+    f.store.close();
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
 
 async function terminateChild(child: ChildProcessWithoutNullStreams) {
   if (child.exitCode !== null || child.signalCode !== null) return;

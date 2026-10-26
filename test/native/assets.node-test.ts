@@ -12,8 +12,8 @@ test("asset API publishes, finalizes, lists and shows an exact private manifest"
     const landing = await request(port, "GET", "/archive?return=https://evil.example", {
       host: "owner.example",
     });
-    assert.equal(landing.status, 302);
-    assert.equal(landing.headers.location, "/login?return=%2Farchive");
+    assert.equal(landing.status, 401);
+    assert.equal(landing.headers.location, undefined);
     const health = await request(port, "GET", "/health", headers);
     assert.equal(health.status, 200);
     assert.deepEqual(JSON.parse(health.body), { ok: true, service: "shlook" });

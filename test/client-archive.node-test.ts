@@ -43,6 +43,36 @@ function localDateTime(iso: string): string {
   return local.toISOString().slice(0, 16);
 }
 
+test("archive refresh recovers only 401 through a same-origin document navigation", async () => {
+  for (const status of [401, 403]) {
+    const dom = new JSDOM(testPage(artifactMarkup("initial", shareExpiry, hardExpiry)), {
+      url: "https://owner.example.com/",
+      pretendToBeVisual: true,
+      runScripts: "outside-only",
+    });
+    const { window } = dom;
+    let destination: string | undefined;
+    try {
+      window.matchMedia = () => ({ matches: false }) as MediaQueryList;
+      window.fetch = async () => new Response(null, { status });
+      Object.assign(window, {
+        recordNavigation: (path: string) => {
+          destination = path;
+        },
+      });
+      window.eval(`(() => {
+        const location = { origin: 'https://owner.example.com', assign: window.recordNavigation };
+        ${clientScript}
+      })();`);
+      window.document.querySelector<HTMLAnchorElement>(".pagination a")!.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      assert.equal(destination, status === 401 ? "/?offset=20" : undefined);
+    } finally {
+      window.close();
+    }
+  }
+});
+
 test("preserves both expiries through archive refresh and policy save", async () => {
   const refreshedPage = archivePage(
     artifactMarkup("refreshed", shareExpiry, hardExpiry),
