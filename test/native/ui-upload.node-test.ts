@@ -127,6 +127,51 @@ test("native transport protects single/batch deletion, expiry and logout without
   assert.equal(new Headers(calls[0].init.headers).has("X-Shlook-CSRF"), false);
 });
 
+test("native logout protects its entire session exchange from passive archive refresh", async () => {
+  let logout: (event: unknown) => Promise<void>;
+  let operations = 0;
+  let destination = "";
+  const fetch = async (path: string, init: RequestInit = {}) => {
+    assert.equal(path, "/api/session");
+    assert.equal(operations, 1);
+    return Response.json(init.method ? {} : { csrfToken: "csrf" });
+  };
+  new Function(
+    "fetch",
+    "document",
+    "location",
+    "beginArchiveOperation",
+    "setStatus",
+    "errorMessage",
+    nativeRequestScript(),
+  )(
+    fetch,
+    {
+      querySelector: () => ({
+        addEventListener: (_type: string, callback: typeof logout) => {
+          logout = callback;
+        },
+      }),
+    },
+    {
+      replace: (path: string) => {
+        destination = path;
+      },
+    },
+    () => {
+      operations++;
+      return () => {
+        operations--;
+      };
+    },
+    () => {},
+    (value: string) => value,
+  );
+  await logout!({ currentTarget: { disabled: false } });
+  assert.equal(operations, 0);
+  assert.equal(destination, "/login");
+});
+
 test("native requests recover expired sessions through document navigation, not API redirects", async () => {
   for (const failure of ["session", "mutation", "read", "forbidden"]) {
     let reloads = 0;

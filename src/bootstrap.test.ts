@@ -238,7 +238,8 @@ describe("worker bootstrap", () => {
     expect(body).toContain("try { await refreshArchive(); } catch {}");
     expect(body).toContain("history.replaceState(null, '', archivePath);");
     expect(body).toContain("mobilePreviewObserver?.disconnect();");
-    expect(body).toContain("const previewsSuspended = suspendArchivePreviews();");
+    expect(body).toContain("const previewsSuspended = !passive && suspendArchivePreviews();");
+    expect(body).toContain("document.visibilityState === 'visible' && document.hasFocus()");
     expect(body).toContain("setStatus(null, 'Loading archive...');");
     expect(body).toContain("controller.abort(), 12000");
     expect(body).toContain("navigateArchive(link.href, 'push');");
@@ -319,7 +320,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain('data-batch-delete aria-label="Delete selected artifacts"');
     expect(body).toContain('data-select-item type="checkbox"');
     expect(body).toContain("const setSelectMode = (enabled) => {");
-    expect(body).toContain("Promise.all(items.map((item) => ownerRequest('/api/assets/'");
+    expect(body).toContain("Promise.allSettled(items.map((item) => ownerRequest('/api/assets/'");
     expect(body).toContain(".upload-result-url { overflow-wrap: anywhere; word-break: break-word;");
     expect(body).toContain(".sr-only { position: absolute;");
     expect(body).toContain(".search { position: relative; display: block;");

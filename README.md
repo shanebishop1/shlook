@@ -13,6 +13,9 @@ Share artifacts through a private library hosted locally (LAN/Tailscale) or on C
 Use the web app on any device with a modern browser. Any coding agent that can run CLI commands
 can use shlook; the included skill documents the workflow, without tying it to one agent app.
 
+The archive checks for updates every two minutes while visible and focused, and when you return
+to it. Background tabs do not poll; open editors and pending actions defer refreshes.
+
 See [self-hosting](skills/shlook/references/self-host.md) or [Cloudflare setup](skills/shlook/references/setup.md).
 
 ![shlook demo](docs/assets/shlook_demo.gif)

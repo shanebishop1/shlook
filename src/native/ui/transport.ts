@@ -31,9 +31,11 @@ const ownerRequest = async (path, init = {}) => {
 };
 document.querySelector('[data-logout]')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
+  const finishOperation = beginArchiveOperation();
   button.disabled = true;
   try { await ownerRequest('/api/session', { method: 'DELETE' }); location.replace('/login'); }
   catch (error) { setStatus(null, error.message, true); button.disabled = false; }
+  finally { finishOperation(); }
 });`;
 }
 

@@ -9,7 +9,9 @@ batchDelete?.addEventListener('click', async () => {
   openActionConfirmation('Delete ' + items.length + ' selected ' + (items.length === 1 ? 'artifact' : 'artifacts') + '?', 'These artifacts and their files will be removed permanently.', async () => {
     batchDelete.disabled = true;
     try {
-      await Promise.all(items.map((item) => ownerRequest('/api/assets/' + item.closest('[data-record]').dataset.record, { method: 'DELETE' })));
+      const results = await Promise.allSettled(items.map((item) => ownerRequest('/api/assets/' + item.closest('[data-record]').dataset.record, { method: 'DELETE' })));
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed) throw failed.reason;
       location.reload();
     } catch (error) {
       setStatus(null, error instanceof Error ? error.message : 'Batch delete failed.', true);
@@ -38,8 +40,9 @@ actionConfirm.querySelector('[data-action-confirm-submit]').addEventListener('cl
   const action = pendingAction;
   if (!action) return;
   actionConfirm.querySelector('[data-action-confirm-submit]').disabled = true;
+  const finishOperation = beginArchiveOperation();
   try { closeActionConfirmation(); await action(); }
-  finally { actionConfirm.querySelector('[data-action-confirm-submit]').disabled = false; }
+  finally { actionConfirm.querySelector('[data-action-confirm-submit]').disabled = false; finishOperation(); }
 });
 uploadDialog?.addEventListener('click', (event) => { event.stopPropagation(); });
 uploadDialog?.addEventListener('keydown', (event) => trapDialogFocus(uploadDialog, event));
@@ -68,6 +71,7 @@ document.addEventListener('click', async (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     const confirmation = deletion.closest('[data-confirm]');
+    const finishOperation = beginArchiveOperation();
     deletion.disabled = true;
     try {
       await mutate(cardForId(confirmation.dataset.confirmFor), '', { method: 'DELETE' });
@@ -75,7 +79,7 @@ document.addEventListener('click', async (event) => {
     } catch (error) {
       reportError(cardForId(confirmation.dataset.confirmFor), error);
       deletion.disabled = false;
-    }
+    } finally { finishOperation(); }
     return;
   }
   const confirmation = event.target.closest('[data-confirm]');
@@ -127,6 +131,7 @@ uploadForm?.addEventListener('submit', async (event) => {
     return;
   }
   if (!uploadForm.reportValidity()) return;
+  const finishOperation = beginArchiveOperation();
   uploadBusy = true;
   uploadClose.disabled = true;
   uploadSubmit.disabled = true;
@@ -157,6 +162,7 @@ uploadForm?.addEventListener('submit', async (event) => {
     uploadBusy = false;
     uploadClose.disabled = false;
     uploadSubmit.disabled = false;
+    finishOperation();
   }
 });
 uploadForm?.querySelector('[data-upload-copy]').addEventListener('click', async () => {
@@ -220,6 +226,7 @@ document.addEventListener('click', async (event) => {
     const needsSecret = value === 'secret_link' && card.dataset.hasSecret !== '1';
     const path = needsSecret ? '/secret?mode=create' : '/visibility';
     const init = needsSecret ? { method: 'POST', body: '{}' } : { method: 'PATCH', body: JSON.stringify({ visibility: value }) };
+    const finishOperation = beginArchiveOperation();
     closeMenus();
     syncVisibility(id, value);
     menu.querySelector('[data-menu-button]').disabled = true;
@@ -237,7 +244,7 @@ document.addEventListener('click', async (event) => {
     } catch (error) {
       syncVisibility(id, previous);
       reportError(card, error);
-    } finally { menu.querySelector('[data-menu-button]').disabled = false; }
+    } finally { menu.querySelector('[data-menu-button]').disabled = false; finishOperation(); }
     return;
   }
   const inspect = event.target.closest('[data-inspect]');
@@ -248,6 +255,7 @@ document.addEventListener('click', async (event) => {
   if (!button) { closeMenus(); return; }
   const card = button.closest('[data-detail]');
   if (!card) return;
+  const finishOperation = beginArchiveOperation();
   button.disabled = true;
   try {
     if (button.dataset.secret) {
@@ -295,7 +303,7 @@ document.addEventListener('click', async (event) => {
       setStatus(card, 'Share link copied.');
     }
   } catch (error) { reportError(card, error); }
-  finally { if (document.contains(button)) button.disabled = false; }
+  finally { if (document.contains(button)) button.disabled = false; finishOperation(); }
 });
 filterRecords();
 initializeArchiveRows();`;
