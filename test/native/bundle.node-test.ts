@@ -31,8 +31,11 @@ test("inlines classic script, stylesheet and verified raster assets in every HTM
   assert.match(result.get("index.html")!, /data:image\/png;base64,/);
   assert.match(result.get("nested/page.html")!, /window\.ready = true/);
   assert.match(NATIVE_BUNDLE_CSP, /worker-src 'none'/);
-  assert.match(NATIVE_BUNDLE_CSP, /^sandbox allow-scripts;/);
-  assert.doesNotMatch(NATIVE_BUNDLE_CSP, /allow-same-origin|unsafe-eval/);
+  assert.match(NATIVE_BUNDLE_CSP, /^sandbox allow-scripts allow-downloads;/);
+  assert.doesNotMatch(
+    NATIVE_BUNDLE_CSP,
+    /allow-same-origin|allow-popups|allow-top-navigation|unsafe-eval/,
+  );
   const compiledStyle = result.get("index.html")!.match(/<style>(.*?)<\/style>/)?.[1];
   assert.ok(compiledStyle);
   const parsedStyle = postcss.parse(compiledStyle);

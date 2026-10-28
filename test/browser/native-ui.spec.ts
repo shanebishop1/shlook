@@ -430,7 +430,9 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
       await freshContext.close();
     }
     const assertArtifactHeaders = (headers: Record<string, string>) => {
-      expect(headers["content-security-policy"]).toContain("sandbox allow-scripts");
+      expect(headers["content-security-policy"]).toContain(
+        "sandbox allow-scripts allow-downloads;",
+      );
       expect(headers["content-security-policy"]).not.toContain("allow-same-origin");
       expect(headers["content-security-policy"]).toContain("script-src 'unsafe-inline'");
       expect(headers["content-security-policy"]).toContain("connect-src 'none'");
@@ -633,7 +635,9 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
         .getByRole("heading", { name: "bundle-ok" })
         .evaluate((heading) => getComputedStyle(heading).color),
     ).toBe("rgb(1, 2, 3)");
-    expect(await bundlePanel.locator("iframe").getAttribute("sandbox")).toBe("allow-scripts");
+    expect(await bundlePanel.locator("iframe").getAttribute("sandbox")).toBe(
+      "allow-scripts allow-downloads",
+    );
     await rowFor("bundle").locator(".row-action [data-inspect]").click();
     await page.locator("input[data-search]").fill("single-notes");
     await expect(rowFor("single-notes")).toBeVisible();
