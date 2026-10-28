@@ -72,7 +72,7 @@ test("native archive reuses canonical markup/styles, escapes attribution and use
     null,
   );
   for (const frame of document.querySelectorAll("iframe"))
-    assert.equal(frame.getAttribute("sandbox"), "allow-scripts");
+    assert.equal(frame.getAttribute("sandbox"), "allow-scripts allow-downloads");
   const csp = response.headers.get("content-security-policy")!;
   assert.ok(!csp.includes("unsafe-inline"));
   const nonce = document.querySelector("style")!.getAttribute("nonce");

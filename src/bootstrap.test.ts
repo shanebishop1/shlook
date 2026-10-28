@@ -121,7 +121,7 @@ describe("worker bootstrap", () => {
     expect(body).toContain(`src="/preview/assets/${id}/"`);
     expect(body).toContain(`data-preview-fallback data-src="/preview/assets/${id}/"`);
     expect(body).not.toContain("data-preview-fallback src=");
-    expect(body).toContain('sandbox="allow-scripts"');
+    expect(body).toContain('sandbox="allow-scripts allow-downloads"');
     expect(body).toContain('scrolling="no"');
     expect(body).not.toContain('sandbox="allow-same-origin"');
     expect(body).toContain(

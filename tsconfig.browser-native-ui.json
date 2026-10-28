@@ -8,5 +8,5 @@
     "types": ["node", "@playwright/test"],
     "allowImportingTsExtensions": true
   },
-  "include": ["test/browser/native-ui.spec.ts"]
+  "include": ["test/browser/native-ui.spec.ts", "test/browser/native-markdown-download.spec.ts"]
 }

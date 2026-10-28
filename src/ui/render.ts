@@ -41,7 +41,7 @@ function previewMedia(
 ): string {
   const size = large ? "Large preview" : "Preview";
   const label = escapeHtml(assetName);
-  return `<div class="preview-media"${large ? " data-preview-large" : ""}><img class="preview-image" data-preview-image ${resolveId ? `data-preview-entrypoint="${escapeHtml(resolveId)}"` : `src="${previewUrl}"`} alt="${size} of ${label}" loading="lazy" referrerpolicy="no-referrer"><iframe class="preview-frame" data-preview-fallback data-src="${resolveId ? "" : previewUrl}" title="${size} of ${label}" sandbox="allow-scripts" scrolling="no" loading="lazy" referrerpolicy="no-referrer" tabindex="-1" hidden></iframe></div>`;
+  return `<div class="preview-media"${large ? " data-preview-large" : ""}><img class="preview-image" data-preview-image ${resolveId ? `data-preview-entrypoint="${escapeHtml(resolveId)}"` : `src="${previewUrl}"`} alt="${size} of ${label}" loading="lazy" referrerpolicy="no-referrer"><iframe class="preview-frame" data-preview-fallback data-src="${resolveId ? "" : previewUrl}" title="${size} of ${label}" sandbox="allow-scripts allow-downloads" scrolling="no" loading="lazy" referrerpolicy="no-referrer" tabindex="-1" hidden></iframe></div>`;
 }
 
 function visibilityLabel(value: string): string {

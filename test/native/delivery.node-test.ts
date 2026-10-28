@@ -52,7 +52,7 @@ test("direct, latest and preview delivery enforce sandbox headers and selected a
       assert.equal(response.status, 200);
       assert.match(
         response.headers["content-security-policy"] as string,
-        /^sandbox allow-scripts;/,
+        /^sandbox allow-scripts allow-downloads;/,
       );
       assert.equal(response.headers["x-content-type-options"], "nosniff");
       assert.equal(response.headers["cache-control"], "private, no-store");
@@ -124,7 +124,9 @@ test("unsupported active MIME is forced to attachment and unknown object paths a
     assert.equal(download.headers["content-type"], "application/octet-stream");
     assert.equal(download.headers["content-disposition"], "attachment");
     assert.equal(
-      download.headers["content-security-policy"]?.toString().startsWith("sandbox allow-scripts;"),
+      download.headers["content-security-policy"]
+        ?.toString()
+        .startsWith("sandbox allow-scripts allow-downloads;"),
       true,
     );
     assert.equal((await request(port, "GET", `/assets/${id}/missing.js`, headers)).status, 404);
@@ -260,7 +262,7 @@ test("nested CLI-style encoded paths publish and serve compiled nested HTML/CSS/
       assert.equal(response.status, 200, response.body);
       assert.match(
         response.headers["content-security-policy"] as string,
-        /^sandbox allow-scripts;/,
+        /^sandbox allow-scripts allow-downloads;/,
       );
       if (route.endsWith("index.html")) assert.match(response.body, /data:image\/png;base64,/);
     }

@@ -16,7 +16,7 @@ export class UnsupportedBundleError extends Error {
 }
 
 export const NATIVE_BUNDLE_CSP =
-  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
+  "sandbox allow-scripts allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
 
 const MAX_FILES = 500;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;

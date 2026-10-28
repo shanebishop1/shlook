@@ -64,3 +64,8 @@ API tokens identify users; browser login exchanges a token for a persistent prot
 Users share a private library: viewers read, publishers modify. Uploads render only as compiled,
 opaque-sandboxed documents. See [security](../skills/shlook/references/security.md) for session,
 CSRF, and isolation constraints, and [self-hosting](../skills/shlook/references/self-host.md) for setup.
+
+Native document CSP and archive preview iframes permit downloads, including client-generated
+Markdown exports. This does not grant same-origin access, popups, or top-level navigation;
+native connection, form, and nested-frame restrictions remain unchanged. Downloads are
+artifact-controlled files, not scanned or trusted output.
