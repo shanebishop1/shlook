@@ -105,7 +105,7 @@ function assetRow(
     <td colspan="7"><div class="inspector">
       <div class="large-preview">${previewMedia(previewUrl, asset.name, true, resolvePreviewId)}</div>
       <div class="panel">
-        <div class="panel-head"><div><h2>${name}</h2>${description ? `<p class="panel-description">${description}</p>` : ""}<p class="panel-id">${id}</p></div><a class="open-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer">Open private view <span aria-hidden="true">↗</span></a></div>
+        <div class="panel-head"><div><h2>${name}</h2>${description ? `<p class="panel-description">${description}</p>` : ""}<p class="panel-id">${id}</p></div><div class="panel-links"><a class="open-link" href="${privateUrl}" target="_blank" rel="noopener noreferrer">Open private view <span aria-hidden="true">↗</span></a>${capabilities.download ? `<a class="open-link" href="${privateOrigin}/api/assets/${id}/download" download data-download>Download <span aria-hidden="true">↓</span></a>` : ""}</div></div>
         <dl class="summary"><div><dt>Created</dt><dd>${created}</dd></div><div><dt>Updated</dt><dd>${updated}</dd></div></dl>
         ${
           capabilities.sharing

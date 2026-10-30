@@ -111,6 +111,7 @@ export function createNativeUiHandler(options: NativeUiOptions = {}) {
           sharing: false,
           directories: false,
           resolvePreviewEntrypoint: true,
+          download: true,
         },
         logout: true,
         favicon: "/ui/favicon.svg",

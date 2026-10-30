@@ -273,3 +273,92 @@ test("nested CLI-style encoded paths publish and serve compiled nested HTML/CSS/
     rmSync(f.directory, { recursive: true, force: true });
   }
 });
+
+test("media files support byte ranges and downloads return the self-contained entrypoint", async () => {
+  const f = fixture(),
+    port = await listen(f.app.server);
+  try {
+    const headers = auth(f.token),
+      created = await request(
+        port,
+        "POST",
+        "/api/assets",
+        { ...headers, "content-type": "application/json" },
+        JSON.stringify({ name: 'Tab: "mix"' }),
+      );
+    const id = JSON.parse(created.body).asset.id;
+    const song = Buffer.from("ID3\u0004\u0000abcdefghij");
+    const html = '<!doctype html><audio controls src="song.mp3"></audio>';
+    const files = [];
+    for (const [path, body] of [
+      ["song.mp3", song],
+      ["index.html", Buffer.from(html)],
+    ] as const) {
+      const uploaded = await request(
+        port,
+        "PUT",
+        `/api/assets/${id}/files/${path}`,
+        { ...headers, "content-length": String(body.byteLength) },
+        body,
+      );
+      files.push(JSON.parse(uploaded.body).file);
+    }
+    const final = await request(
+      port,
+      "POST",
+      `/api/assets/${id}/finalize`,
+      { ...headers, "content-type": "application/json" },
+      JSON.stringify({ entrypoint: "index.html", files }),
+    );
+    assert.equal(final.status, 200, final.body);
+
+    const whole = await request(port, "GET", `/assets/${id}/song.mp3`, headers);
+    assert.equal(whole.status, 200);
+    assert.equal(whole.headers["content-type"], "audio/mpeg");
+    assert.equal(whole.headers["accept-ranges"], "bytes");
+    assert.equal(whole.headers["content-disposition"], undefined);
+    const part = await request(port, "GET", `/assets/${id}/song.mp3`, {
+      ...headers,
+      range: "bytes=5-8",
+    });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers["content-range"], `bytes 5-8/${song.byteLength}`);
+    assert.equal(part.body, "abcd");
+    const suffix = await request(port, "GET", `/assets/${id}/song.mp3`, {
+      ...headers,
+      range: "bytes=-3",
+    });
+    assert.equal(suffix.body, "hij");
+    const beyond = await request(port, "GET", `/assets/${id}/song.mp3`, {
+      ...headers,
+      range: "bytes=99-",
+    });
+    assert.equal(beyond.status, 416);
+    assert.equal(beyond.headers["content-range"], `bytes */${song.byteLength}`);
+    const page = await request(port, "GET", `/assets/${id}/index.html`, {
+      ...headers,
+      range: "bytes=0-3",
+    });
+    assert.equal(page.status, 200);
+    assert.match(page.body, /src="data:audio\/mpeg;base64,/);
+
+    const download = await request(port, "GET", `/api/assets/${id}/download`, headers);
+    assert.equal(download.status, 200);
+    assert.equal(download.headers["content-type"], "application/octet-stream");
+    assert.equal(
+      download.headers["content-disposition"],
+      `attachment; filename="Tab mix.html"; filename*=UTF-8''Tab%20mix.html`,
+    );
+    assert.match(download.headers["content-security-policy"] as string, /^sandbox /);
+    assert.equal(download.body, page.body);
+    const missing = await request(
+      port,
+      "GET",
+      `/api/assets/00000000-0000-4000-8000-000000000000/download`,
+      headers,
+    );
+    assert.equal(missing.status, 404);
+  } finally {
+    await f.dispose();
+  }
+});

@@ -16,7 +16,7 @@ export class UnsupportedBundleError extends Error {
 }
 
 export const NATIVE_BUNDLE_CSP =
-  "sandbox allow-scripts allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
+  "sandbox allow-scripts allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
 
 const MAX_FILES = 500;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -30,11 +30,31 @@ const MIME_BY_EXT: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
   ".otf": "font/otf",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".weba": "audio/webm",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mkv": "video/x-matroska",
+  ".ogv": "video/ogg",
+  ".vtt": "text/vtt",
 };
+/** Pre-encoded data URLs that inert subresource contexts may keep as-is. */
+const INLINE_DATA_URL = /^data:(?:image\/(?!svg)|audio\/|video\/|font\/|text\/vtt[;,])[^,]*,/i;
 
 function fail(message: string): never {
   throw new UnsupportedBundleError(message);
@@ -102,33 +122,49 @@ function asText(file: Uint8Array): string {
   }
 }
 
+const latin1 = (data: Uint8Array, start: number, end: number) =>
+  String.fromCharCode(...data.slice(start, end));
+const isoMedia = (data: Uint8Array) => latin1(data, 4, 8) === "ftyp";
+const matroska = (data: Uint8Array) =>
+  data[0] === 0x1a && data[1] === 0x45 && data[2] === 0xdf && data[3] === 0xa3;
+const ogg = (data: Uint8Array) => latin1(data, 0, 4) === "OggS";
+const id3 = (data: Uint8Array) => latin1(data, 0, 3) === "ID3";
+const SIGNATURES: Record<string, (data: Uint8Array) => boolean> = {
+  ".png": (d) => latin1(d, 0, 8) === "\x89PNG\r\n\x1a\n",
+  ".jpg": (d) => d[0] === 0xff && d[1] === 0xd8 && d[2] === 0xff,
+  ".jpeg": (d) => d[0] === 0xff && d[1] === 0xd8 && d[2] === 0xff,
+  ".gif": (d) => ["GIF87a", "GIF89a"].includes(latin1(d, 0, 6)),
+  ".webp": (d) => latin1(d, 0, 4) === "RIFF" && latin1(d, 8, 12) === "WEBP",
+  ".avif": (d) => ["ftypavif", "ftypavis"].includes(latin1(d, 4, 12)),
+  ".bmp": (d) => latin1(d, 0, 2) === "BM",
+  ".ico": (d) => d[0] === 0 && d[1] === 0 && d[2] === 1 && d[3] === 0,
+  ".woff": (d) => latin1(d, 0, 4) === "wOFF",
+  ".woff2": (d) => latin1(d, 0, 4) === "wOF2",
+  ".ttf": (d) => d[0] === 0 && d[1] === 1 && d[2] === 0 && d[3] === 0,
+  ".otf": (d) => latin1(d, 0, 4) === "OTTO",
+  ".mp3": (d) => id3(d) || (d[0] === 0xff && (d[1]! & 0xe0) === 0xe0),
+  ".wav": (d) => latin1(d, 0, 4) === "RIFF" && latin1(d, 8, 12) === "WAVE",
+  ".ogg": ogg,
+  ".oga": ogg,
+  ".opus": ogg,
+  ".ogv": ogg,
+  ".flac": (d) => id3(d) || latin1(d, 0, 4) === "fLaC",
+  ".m4a": isoMedia,
+  ".mp4": isoMedia,
+  ".m4v": isoMedia,
+  ".mov": (d) => ["ftyp", "moov", "mdat", "free", "wide", "skip"].includes(latin1(d, 4, 8)),
+  ".aac": (d) => id3(d) || (d[0] === 0xff && (d[1]! & 0xf6) === 0xf0),
+  ".weba": matroska,
+  ".webm": matroska,
+  ".mkv": matroska,
+  ".vtt": (d) => /^(?:\ufeff)?WEBVTT(?:[ \t\r\n]|$)/.test(new TextDecoder().decode(d.slice(0, 16))),
+};
+
 function checkAsset(path: string, data: Uint8Array): string {
   const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
   const mime = MIME_BY_EXT[ext];
   if (!mime) return fail("Unsupported static asset type");
-  const starts = (...signature: number[]) => signature.every((n, i) => data[i] === n);
-  const valid =
-    ext === ".png"
-      ? starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-      : ext === ".jpg" || ext === ".jpeg"
-        ? starts(0xff, 0xd8, 0xff)
-        : ext === ".gif"
-          ? ["GIF87a", "GIF89a"].some((s) => asText(data.slice(0, 6)) === s)
-          : ext === ".webp"
-            ? asText(data.slice(0, 4)) === "RIFF" && asText(data.slice(8, 12)) === "WEBP"
-            : ext === ".woff"
-              ? asText(data.slice(0, 4)) === "wOFF"
-              : ext === ".woff2"
-                ? asText(data.slice(0, 4)) === "wOF2"
-                : ext === ".ttf"
-                  ? starts(0, 1, 0, 0)
-                  : ext === ".otf"
-                    ? asText(data.slice(0, 4)) === "OTTO"
-                    : ext === ".avif"
-                      ? asText(data.slice(4, 12)).includes("ftypavif") ||
-                        asText(data.slice(4, 12)).includes("ftypavis")
-                      : false;
-  if (!valid) fail(`Asset content does not match its ${ext} extension`);
+  if (!SIGNATURES[ext]!(data)) fail(`Asset content does not match its ${ext} extension`);
   return mime;
 }
 
@@ -151,6 +187,12 @@ function dataUrl(
   ref: string,
   budget: CompileBudget,
 ): string {
+  // Already-inline bytes were counted with their containing document.
+  if (/^\s*data:/i.test(ref)) {
+    const inline = ref.trim();
+    if (!INLINE_DATA_URL.test(inline)) fail("Unsupported inline data URL type");
+    return inline;
+  }
   const resolved = resolvePath(path, ref);
   const data = files.get(resolved);
   if (!data) return fail(`Unresolved static dependency: ${resolved}`);
@@ -299,8 +341,13 @@ function compileHtml(
     if ([...a.keys()].some((name) => name.startsWith("on")) || a.has("srcdoc"))
       fail("Inline handlers and nested documents are unsupported");
     if (a.has("srcset")) fail("srcset is unsupported; use one local img src");
-    if (a.has("poster") || a.has("background"))
-      fail("poster and background resource attributes are unsupported");
+    if (a.has("background")) fail("background resource attributes are unsupported");
+    if (a.has("poster")) {
+      if (tag !== "video") fail("poster is only supported on video elements");
+      const poster = dataUrl(path, files, a.get("poster")!, budget);
+      if (!/^data:image\//i.test(poster)) fail("Video posters must be images");
+      setAttr(node, "poster", poster);
+    }
     for (const [name, value] of a) {
       if (
         ["href", "xlink:href", "action", "formaction"].includes(name) &&

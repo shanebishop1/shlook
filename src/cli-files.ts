@@ -139,10 +139,34 @@ const rasterTypes: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+const audioTypes: Record<string, string> = {
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".oga": "audio/ogg",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".wav": "audio/wav",
+  ".weba": "audio/webm",
+};
+
+const videoTypes: Record<string, string> = {
+  ".m4v": "video/mp4",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".ogv": "video/ogg",
+  ".webm": "video/webm",
+};
+
 function contentType(path: string): string {
   const extension = extname(path).toLowerCase();
   if ([".html", ".htm"].includes(extension)) return "text/html; charset=utf-8";
   if (rasterTypes[extension] !== undefined) return rasterTypes[extension];
+  if (audioTypes[extension] !== undefined) return audioTypes[extension];
+  if (videoTypes[extension] !== undefined) return videoTypes[extension];
+  if (extension === ".vtt") return "text/vtt; charset=utf-8";
   if (extension === ".css") return "text/css; charset=utf-8";
   if (extension === ".js" || extension === ".mjs") return "text/javascript; charset=utf-8";
   if (extension === ".json") return "application/json";
@@ -305,12 +329,22 @@ export async function loadPublishInput(
       if (extension === ".mdx") {
         throw new Error("MDX single-file entrypoints are not supported");
       }
-      if (![".html", ".htm", ".md", ...Object.keys(rasterTypes)].includes(extension)) {
-        throw new Error("single-file publish requires HTML, Markdown, or a raster image");
+      const media =
+        audioTypes[extension] !== undefined
+          ? "audio"
+          : videoTypes[extension] !== undefined
+            ? "video"
+            : null;
+      if (![".html", ".htm", ".md", ...Object.keys(rasterTypes)].includes(extension) && !media) {
+        throw new Error("single-file publish requires HTML, Markdown, a raster image, or media");
       }
-      const entrypoint = extension === ".md" ? `${name}.html` : name;
+      const entrypoint = media ? "index.html" : extension === ".md" ? `${name}.html` : name;
       if (requestedEntrypoint !== undefined && requestedEntrypoint !== entrypoint) {
-        throw new Error("single-file entrypoint must equal the filename");
+        throw new Error(
+          media
+            ? "single-file media entrypoint must be index.html"
+            : "single-file entrypoint must equal the filename",
+        );
       }
       if (!Number.isSafeInteger(metadata.size) || metadata.size > maxUploadBytes) {
         throw new Error("publish input contains a file larger than 25 MiB");
@@ -321,6 +355,23 @@ export async function loadPublishInput(
         size: metadata.size,
         contentType: contentType(name),
       });
+      if (media) {
+        const source = encodeURIComponent(name).replaceAll("'", "%27");
+        const label = name.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+        const player =
+          media === "audio"
+            ? `<p>${label}</p><audio controls preload="metadata" src="${source}"></audio>`
+            : `<video controls playsinline preload="metadata" style="max-width:100%" src="${source}"></video>`;
+        const page = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${label}</title></head><body>\n${player}\n</body></html>\n`;
+        const bytes = new TextEncoder().encode(page);
+        if (original.bytes.byteLength + bytes.byteLength > maxPublicationBytes) {
+          throw new Error("publish input exceeds 100 MiB");
+        }
+        return {
+          entrypoint,
+          files: [original, { path: entrypoint, bytes, contentType: "text/html; charset=utf-8" }],
+        };
+      }
       if (extension !== ".md") return { entrypoint, files: [original] };
       const source = new TextDecoder("utf-8", { fatal: true }).decode(original.bytes);
       const rendered = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>\n${renderSafeMarkdown(source)}\n</body></html>\n`;

@@ -152,7 +152,7 @@ test("preserves stylesheet media and rejects conditional stylesheet links", () =
   }
 });
 
-test("rejects srcset, poster, and background resource attributes instead of leaving raw dependencies", () => {
+test("rejects srcset, external or missing posters, and background attributes instead of leaving raw dependencies", () => {
   for (const markup of [
     '<source srcset="https://example.test/a.png 1x">',
     '<source srcset="local.png 1x">',
@@ -206,4 +206,49 @@ test("estimates entity expansion before serializing text and attributes", () => 
   const amplified = "&".repeat(9 * 1024 * 1024);
   unsupported(() => compile({ "index.html": `<p>${amplified}</p>` }));
   unsupported(() => compile({ "index.html": `<div title="${amplified}"></div>` }));
+});
+
+const mp3 = Uint8Array.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]);
+const mp4 = Uint8Array.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]);
+const wav = new TextEncoder().encode("RIFF\0\0\0\0WAVEfmt ");
+
+test("inlines verified audio, video, captions and posters and allows only data media", () => {
+  const html = compile({
+    "index.html":
+      '<audio controls src="song.mp3"></audio><audio><source src="a/b.wav"></audio>' +
+      '<video poster="p.png"><source src="clip.mp4"><source src="clip.webm"><track src="c.vtt"></video>',
+    "song.mp3": mp3,
+    "a/b.wav": wav,
+    "clip.mp4": mp4,
+    "clip.webm": webm,
+    "c.vtt": "WEBVTT\n\n00:00.000 --> 00:01.000\nHi",
+    "p.png": png,
+  }).get("index.html")!;
+  for (const mime of ["audio/mpeg", "audio/wav", "video/mp4", "video/webm", "text/vtt"])
+    assert.ok(html.includes(`src="data:${mime};base64,`), mime);
+  assert.match(html, /poster="data:image\/png;base64,/);
+  assert.match(NATIVE_BUNDLE_CSP, /media-src data: blob:;/);
+  assert.doesNotMatch(NATIVE_BUNDLE_CSP, /media-src[^;]*(?:'self'|https?:|\*)/);
+});
+
+test("rejects mismatched media bytes, non-image posters and unsafe inline data URLs", () => {
+  unsupported(() => compile({ "index.html": '<audio src="x.mp3"></audio>', "x.mp3": png }));
+  unsupported(() => compile({ "index.html": '<video src="x.mp4"></video>', "x.mp4": mp3 }));
+  unsupported(() => compile({ "index.html": '<track src="x.vtt">', "x.vtt": "not captions" }));
+  unsupported(() => compile({ "index.html": '<video poster="x.mp3"></video>', "x.mp3": mp3 }));
+  unsupported(() => compile({ "index.html": '<img poster="x.png">', "x.png": png }));
+  for (const url of ["data:image/svg+xml;base64,PHN2Zz4=", "data:text/html,<b>x</b>"])
+    unsupported(() => compile({ "index.html": `<img src="${url}">` }));
+});
+
+test("keeps pre-encoded media and image data URLs as-is", () => {
+  const html = compile({
+    "index.html":
+      '<audio src="data:audio/mpeg;base64,SUQz"></audio><img src=" data:image/png;base64,iVBO">' +
+      "<style>.x{background:url(data:image/png;base64,iVBO)}</style>",
+  }).get("index.html")!;
+  assert.match(html, /<audio src="data:audio\/mpeg;base64,SUQz">/);
+  assert.match(html, /<img src="data:image\/png;base64,iVBO">/);
+  assert.match(html, /url\("data:image\/png;base64,iVBO"\)/);
 });
