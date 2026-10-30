@@ -170,6 +170,24 @@ test("loads single HTML and raster files, including the trusted macOS /var alias
   }
 });
 
+test("wraps single audio and video files in a generated player page", async () => {
+  const directory = await temporaryDirectory();
+  for (const [name, contentType, player] of [
+    ["my song's.mp3", "audio/mpeg", /<audio controls preload="metadata" src="my%20song%27s\.mp3">/],
+    ["clip.webm", "video/webm", /<video controls playsinline [^>]*src="clip\.webm">/],
+  ] as const) {
+    const path = join(directory, name);
+    const bytes = new Uint8Array([0x49, 0x44, 0x33]);
+    await writeFile(path, bytes);
+    const loaded = await loadPublishInput(path);
+    assert.equal(loaded.entrypoint, "index.html");
+    assert.deepEqual(loaded.files[0], { path: name, bytes, contentType });
+    assert.equal(loaded.files[1]!.path, "index.html");
+    assert.match(new TextDecoder().decode(loaded.files[1]!.bytes), player);
+    await assert.rejects(loadPublishInput(path, name), /media entrypoint must be index\.html/);
+  }
+});
+
 test("rejects NUL input components instead of truncating native C paths", async () => {
   const directory = await temporaryDirectory();
   const path = join(directory, "index.html");

@@ -65,6 +65,10 @@ test("native archive reuses canonical markup/styles, escapes attribution and use
   assert.equal(document.querySelector("[data-directory-picker]"), null);
   assert.equal(document.querySelector("[data-upload-input]")?.hasAttribute("multiple"), false);
   assert.ok(document.querySelector("[data-hard-expiry]"));
+  const id = document.querySelector("[data-detail]")!.getAttribute("data-detail");
+  const download = document.querySelector("[data-detail] a[data-download]")!;
+  assert.equal(download.getAttribute("href"), `/api/assets/${id}/download`);
+  assert.ok(download.hasAttribute("download"));
   assert.equal(
     document.querySelector(
       "[data-share-expiry],[data-visibility-menu],[data-secret],[data-copy-public],.upload-visibility,[data-filter-menu]",

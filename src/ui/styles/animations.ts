@@ -47,9 +47,10 @@ html[data-theme="dark"] .brand-fold { fill: #d6a36f; }
 .theme-toggle:hover svg { transform: rotate(-8deg); }
 .open-link span { display: inline-block; transition: transform .14s ease-out; }
 .open-link:hover span, .open-link:focus-visible span { transform: translate(2px, -2px); }
+.open-link[data-download]:hover span, .open-link[data-download]:focus-visible span { transform: translateY(2px); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
-  .preview-button:hover .preview-image, .preview-button:focus-visible .preview-image, .theme-toggle:hover svg, .open-link:hover span, .open-link:focus-visible span { transform: none; }
+  .preview-button:hover .preview-image, .preview-button:focus-visible .preview-image, .theme-toggle:hover svg, .open-link:hover span, .open-link:focus-visible span, .open-link[data-download]:hover span, .open-link[data-download]:focus-visible span { transform: none; }
 }`;
 }

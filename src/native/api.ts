@@ -68,10 +68,28 @@ const fileMime: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
   avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
   woff: "font/woff",
   woff2: "font/woff2",
   ttf: "font/ttf",
   otf: "font/otf",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  weba: "audio/webm",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  mkv: "video/x-matroska",
+  ogv: "video/ogg",
+  vtt: "text/vtt; charset=utf-8",
 };
 const randomKey = () => randomBytes(24).toString("hex");
 function nowIso(value: number) {
@@ -549,6 +567,28 @@ export class NativeAssetService {
       mimeType: file.mimeType,
       html,
       compiled: Boolean(file.compiledKey),
+    };
+  }
+  /** Entrypoint bytes for download; HTML is the self-contained compiled document. */
+  download(id: string) {
+    const asset = this.get(id);
+    if (!asset.entrypoint) return fail(404, "not_found");
+    const file = this.readFile(id, asset.entrypoint);
+    const base = asset.entrypoint.split("/").at(-1)!;
+    const generic = /^(?:index|default)\.html?$/i.test(base);
+    const stem = Array.from(asset.name, (character) => {
+      const code = character.codePointAt(0)!;
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || '/\\:*?"<>|'.includes(character)
+        ? " "
+        : character;
+    })
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+    return {
+      bytes: file.bytes,
+      filename: generic && stem ? `${stem}${base.slice(base.lastIndexOf("."))}` : base,
     };
   }
   cleanup(now = this.now(), recoverInterruptedFinalizing = false) {

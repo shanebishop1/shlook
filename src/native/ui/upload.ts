@@ -43,8 +43,12 @@ const publishUpload = async () => {
     total = total - only.size + bytes.byteLength;
     if (total > maxTotal) throw new Error('A publication exceeds 100 MiB after Markdown conversion');
     prepared.set(only, { path: only.name + '.html', bytes });
-  } else if (single && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'].includes(extension)) {
+  } else if (single && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico'].includes(extension)) {
     addIndex(htmlDocument('<img alt="' + escape(only.name) + '" src="' + escape(encodeURIComponent(only.name)) + '">'));
+  } else if (single && ['mp3', 'wav', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba'].includes(extension)) {
+    addIndex(htmlDocument('<p>' + escape(only.name) + '</p><audio controls preload="metadata" src="' + escape(encodeURIComponent(only.name)) + '"></audio>'));
+  } else if (single && ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'ogv'].includes(extension)) {
+    addIndex(htmlDocument('<video controls playsinline preload="metadata" style="max-width:100%" src="' + escape(encodeURIComponent(only.name)) + '"></video>'));
   }
   if (!(single && extension === 'md') && files.every(file => /\.(?:md|mdx)$/i.test(file.webkitRelativePath || file.name))) {
     addIndex(htmlDocument('<p>Files in this directory are preserved as inert downloads; directory Markdown is not rendered.</p>'));

@@ -8,6 +8,7 @@ export interface OwnerCapabilities {
   sharing: boolean;
   directories: boolean;
   resolvePreviewEntrypoint?: boolean;
+  download?: boolean;
 }
 
 export const ownerCapabilities: OwnerCapabilities = {

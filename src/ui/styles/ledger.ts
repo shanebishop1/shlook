@@ -22,6 +22,7 @@ export function ledgerStyles(): string {
   max-width: 250px; margin: 5px 0 0; overflow: hidden; color: var(--muted);
   font: 11px/1.3 ui-monospace, monospace; text-overflow: ellipsis;
 }
+.panel-links { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; }
 .open-link { flex: none; color: var(--accent); font-size: 12px; font-weight: 650; text-decoration: none; }
 .open-link:hover { text-decoration: underline; }
 .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 0; }

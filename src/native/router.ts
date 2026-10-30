@@ -1,6 +1,6 @@
 import { type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { NativeApiError, NativeAssetService, decodeAssetPath } from "./api.ts";
-import { deliverArtifact, entrypointLocation } from "./delivery.ts";
+import { deliverArtifact, deliverDownload, entrypointLocation } from "./delivery.ts";
 import {
   createNativeServer,
   type AuthorizedBoundary,
@@ -176,6 +176,11 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
           apiResponse(response, 200, { asset: assets.get(id) });
           return;
         }
+        if ((method === "GET" || method === "HEAD") && rest === "download") {
+          requireViewer(identity);
+          deliverDownload(response, assets, id, method === "HEAD");
+          return;
+        }
         if (method === "PUT" && rest.startsWith("files/")) {
           requirePublisher(identity);
           const encoded = rest.slice("files/".length);
@@ -254,6 +259,7 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
           relative,
           path.startsWith("/preview/"),
           method === "HEAD",
+          request.headers.range,
         );
         return;
       }
