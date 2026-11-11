@@ -3,6 +3,7 @@ import { parseCliArguments } from "./cli/arguments.ts";
 import { defaultCliDependencies, isolatedCommandEnvironment } from "./cli/dependencies.ts";
 import { dispatch } from "./cli/dispatch.ts";
 import { normalizeCliError } from "./cli/errors.ts";
+import { CLI_HELP } from "./cli/help.ts";
 import { sanitizeCliValue } from "./cli-files.ts";
 import type { CliDependencies } from "./cli/types.ts";
 import { readConnectionToken } from "./cli/connection.ts";
@@ -20,6 +21,18 @@ export async function runCli(
     const parsed = dependencies.parseArguments?.(argv) ?? parseCliArguments(argv);
     json = parsed.options.json ?? false;
     command = parsed.positionals[0] ?? "unknown";
+    if (
+      parsed.options.help ||
+      parsed.positionals.length === 0 ||
+      (command === "help" && parsed.positionals.length === 1)
+    ) {
+      dependencies.stdout(
+        json
+          ? `${JSON.stringify({ ok: true, command: "help", data: { help: CLI_HELP } })}\n`
+          : CLI_HELP,
+      );
+      return 0;
+    }
     const result = await dispatch(parsed.positionals, parsed.options, dependencies);
     const data = result.allowSecrets ? result.data : sanitizeCliValue(result.data);
     dependencies.stdout(

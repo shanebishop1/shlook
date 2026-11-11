@@ -4,6 +4,7 @@ import postcss from "postcss";
 import {
   compileNativeBundle,
   NATIVE_BUNDLE_CSP,
+  NATIVE_SVG_CSP,
   UnsupportedBundleError,
 } from "../../src/native/bundle.ts";
 
@@ -168,7 +169,7 @@ test("rejects srcset, external or missing posters, and background attributes ins
 test("rejects unsafe names and executable entrypoints", () => {
   unsupported(() => compile({ "../index.html": "x" }, "../index.html"));
   unsupported(() => compile({ "index.mdx": "# not safe" }, "index.mdx"));
-  unsupported(() => compile({ "index.svg": "<svg/>" }, "index.svg"));
+  unsupported(() => compile({ "index.svg": "<html>not SVG</html>" }, "index.svg"));
   for (const path of [
     "a//b.html",
     "a/./b.html",
@@ -238,8 +239,47 @@ test("rejects mismatched media bytes, non-image posters and unsafe inline data U
   unsupported(() => compile({ "index.html": '<track src="x.vtt">', "x.vtt": "not captions" }));
   unsupported(() => compile({ "index.html": '<video poster="x.mp3"></video>', "x.mp3": mp3 }));
   unsupported(() => compile({ "index.html": '<img poster="x.png">', "x.png": png }));
-  for (const url of ["data:image/svg+xml;base64,PHN2Zz4=", "data:text/html,<b>x</b>"])
+  for (const url of ["data:text/html,<b>x</b>"])
     unsupported(() => compile({ "index.html": `<img src="${url}">` }));
+});
+
+test("supports inline SVG charts, local fragments and SVG image dependencies", () => {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="20" height="20" fill="red"/></svg>';
+  const html = compile({
+    "index.html":
+      '<svg viewBox="0 0 20 20"><defs><linearGradient id="g"><stop stop-color="red"/></linearGradient><path id="p" d="M0 0L20 20"/></defs><rect fill="url(#g)" style="clip-path:url(#clip)"/><use href="#p"/><use xlink:href="#p"/><image href="chart.svg"/></svg><img src="chart.svg"><style>.chart{background:url(chart.svg)}</style>',
+    "chart.svg": svg,
+  }).get("index.html")!;
+  assert.match(html, /<svg viewBox="0 0 20 20">/);
+  assert.match(html, /fill="url\(&quot;#g&quot;\)"/);
+  assert.match(html, /href="#p"/);
+  assert.match(html, /xlink:href="#p"/);
+  assert.match(html, /<image href="data:image\/svg\+xml;base64,/);
+  assert.match(html, /<img src="data:image\/svg\+xml;base64,/);
+  assert.match(html, /background:url\("data:image\/svg\+xml;base64,/);
+  assert.equal(compile({ "chart.svg": svg }, "chart.svg").size, 0);
+  assert.match(NATIVE_SVG_CSP, /^sandbox; default-src 'none';/);
+  assert.doesNotMatch(NATIVE_SVG_CSP, /allow-scripts|allow-same-origin|script-src/);
+});
+
+test("SVG retains resource, script and nested-context restrictions", () => {
+  for (const markup of [
+    '<svg onload="alert(1)"></svg>',
+    '<svg><script href="https://evil.test/x.js"></script></svg>',
+    '<svg><image href="https://evil.test/x.svg"/></svg>',
+    '<svg><image xlink:href="https://evil.test/x.svg"/></svg>',
+    '<svg><use href="https://evil.test/x.svg#p"/></svg>',
+    '<svg><use xlink:href="javascript:alert(1)"/></svg>',
+    '<svg><rect fill="url(https://evil.test/x.svg#g)"/></svg>',
+    '<svg><foreignObject><iframe src="x.html"></iframe></foreignObject></svg>',
+  ])
+    unsupported(() => compile({ "index.html": markup }));
+  unsupported(() => compile({ "index.html": '<img src="bad.svg">', "bad.svg": "not an SVG" }));
+  const inline = compile({ "index.html": '<img src="data:image/svg+xml;base64,PHN2Zy8+">' }).get(
+    "index.html",
+  )!;
+  assert.match(inline, /src="data:image\/svg\+xml;base64,PHN2Zy8\+"/);
 });
 
 test("keeps pre-encoded media and image data URLs as-is", () => {

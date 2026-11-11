@@ -1,10 +1,9 @@
 import type { ServerResponse } from "node:http";
-import { NATIVE_BUNDLE_CSP } from "./bundle.ts";
+import { NATIVE_BUNDLE_CSP, NATIVE_SVG_CSP } from "./bundle.ts";
 import { NativeApiError, NativeAssetService, mimeTypeForPath } from "./api.ts";
 
 const ACTIVE_OR_UNKNOWN = new Set([
   "application/octet-stream",
-  "image/svg+xml",
   "application/xml",
   "text/xml",
   "application/wasm",
@@ -15,7 +14,10 @@ export function applyArtifactHeaders(response: ServerResponse, mimeType: string,
     "Content-Type",
     unsupported ? "application/octet-stream" : html ? "text/html; charset=utf-8" : mimeType,
   );
-  response.setHeader("Content-Security-Policy", NATIVE_BUNDLE_CSP);
+  response.setHeader(
+    "Content-Security-Policy",
+    mimeType === "image/svg+xml" ? NATIVE_SVG_CSP : NATIVE_BUNDLE_CSP,
+  );
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Cache-Control", "private, no-store");
   response.setHeader("Referrer-Policy", "no-referrer");

@@ -30,6 +30,8 @@ npx skills add shanebishop1/shlook
 
 Ask your agent to set up Shlook, or configure an [instance profile](skills/shlook/references/instances.md).
 
+Run `shlook`, `shlook -h`, or `shlook --help` for CLI usage and the skill-install command.
+
 ## Alternatives
 
 - **SCP or [croc](https://github.com/schollz/croc):** useful for file transfer. SCP needs an
@@ -64,6 +66,7 @@ shlook publish ./artifact \
 
 Names accept 1-80 characters; descriptions accept up to 500. Both appear in the archive and API.
 Publication defaults to private.
+SVG files and HTML pages with inline SVG charts are supported; no PNG conversion is needed.
 `shlook publish --json` returns `data.url` as the authenticated private viewing URL, not a public
 or secret-link URL. Static bundles should use relative asset URLs such as `./app.js` and
 `./styles.css`, not root-relative `/assets/...` URLs.

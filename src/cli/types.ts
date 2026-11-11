@@ -28,6 +28,7 @@ export interface ConnectionTokenPrompt {
 }
 
 export interface CliOptions {
+  help?: boolean;
   json?: boolean;
   plan?: boolean;
   apply?: boolean;

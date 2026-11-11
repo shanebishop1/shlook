@@ -91,6 +91,19 @@ test("failed finalization cleans up through the same CSRF seam; preparation reje
   }
 });
 
+test("native SVG upload keeps the original and generates an image wrapper", async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20"/></svg>';
+  const result = await publish([new File([svg], "chart.svg", { type: "image/svg+xml" })]);
+  assert.equal(result.error, null);
+  const puts = result.calls.filter((call) => call.init.method === "PUT");
+  assert.equal(puts.length, 2);
+  assert.ok(puts[0].path.endsWith("/chart.svg"));
+  assert.equal(new TextDecoder().decode(puts[0].init.body as Uint8Array), svg);
+  assert.match(new TextDecoder().decode(puts[1].init.body as Uint8Array), /src="chart.svg"/);
+  const final = result.calls.find((call) => call.path.endsWith("/finalize"))!;
+  assert.equal(JSON.parse(final.init.body as string).entrypoint, "index.html");
+});
+
 test("native preparation rejects oversized and invalid UTF-8 inputs before creation", async () => {
   const oversized = new File([], "index.html");
   Object.defineProperty(oversized, "size", { value: 25 * 1024 * 1024 + 1 });

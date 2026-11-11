@@ -18,12 +18,17 @@ export class UnsupportedBundleError extends Error {
 export const NATIVE_BUNDLE_CSP =
   "sandbox allow-scripts allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
 
+/** Raw SVG documents are viewable, but never execute scripts or load remote resources. */
+export const NATIVE_SVG_CSP =
+  "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
+
 const MAX_FILES = 500;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 const MAX_COMPILED_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const MAX_COMPILED_TOTAL_BYTES = 100 * 1024 * 1024;
 const MIME_BY_EXT: Record<string, string> = {
+  ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -54,7 +59,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".vtt": "text/vtt",
 };
 /** Pre-encoded data URLs that inert subresource contexts may keep as-is. */
-const INLINE_DATA_URL = /^data:(?:image\/(?!svg)|audio\/|video\/|font\/|text\/vtt[;,])[^,]*,/i;
+const INLINE_DATA_URL = /^data:(?:image\/|audio\/|video\/|font\/|text\/vtt[;,])[^,]*,/i;
 
 function fail(message: string): never {
   throw new UnsupportedBundleError(message);
@@ -130,6 +135,16 @@ const matroska = (data: Uint8Array) =>
 const ogg = (data: Uint8Array) => latin1(data, 0, 4) === "OggS";
 const id3 = (data: Uint8Array) => latin1(data, 0, 3) === "ID3";
 const SIGNATURES: Record<string, (data: Uint8Array) => boolean> = {
+  ".svg": (data) => {
+    const doc = parse(asText(data));
+    const html = doc.childNodes.find((node) => node.nodeName === "html") as any;
+    const body = html?.childNodes.find((node: any) => node.nodeName === "body");
+    const roots = body?.childNodes.filter(
+      (node: any) =>
+        node.nodeName !== "#comment" && !(node.nodeName === "#text" && !node.value.trim()),
+    );
+    return roots?.length === 1 && roots[0].tagName === "svg";
+  },
   ".png": (d) => latin1(d, 0, 8) === "\x89PNG\r\n\x1a\n",
   ".jpg": (d) => d[0] === 0xff && d[1] === 0xd8 && d[2] === 0xff,
   ".jpeg": (d) => d[0] === 0xff && d[1] === 0xd8 && d[2] === 0xff,
@@ -312,7 +327,7 @@ function cssInline(
         .stringify(node.nodes)
         .trim()
         .replace(/^(['"])(.*)\1$/, "$2");
-      const url = dataUrl(path, files, ref, budget);
+      const url = ref.startsWith("#") ? ref : dataUrl(path, files, ref, budget);
       node.nodes = [{ type: "word", value: `"${url}"` } as any];
     });
     decl.value = parsed.toString();
@@ -337,7 +352,8 @@ function compileHtml(
     const tag = node.tagName?.toLowerCase();
     const a = attrs(node);
     if (tag === "base") fail("HTML base elements are unsupported");
-    if (tag === "svg") fail("Inline SVG is unsupported");
+    const svg = node.namespaceURI === "http://www.w3.org/2000/svg";
+    if (svg && tag === "script") fail("SVG scripts are unsupported; use an HTML script element");
     if ([...a.keys()].some((name) => name.startsWith("on")) || a.has("srcdoc"))
       fail("Inline handlers and nested documents are unsupported");
     if (a.has("srcset")) fail("srcset is unsupported; use one local img src");
@@ -357,6 +373,38 @@ function compileHtml(
     }
     if (["iframe", "frame", "object", "embed", "portal"].includes(tag))
       fail("Nested browsing contexts and embedded objects are unsupported");
+    if (svg) {
+      for (const attr of node.attrs ?? []) {
+        const name = attr.name.toLowerCase();
+        if (name === "href" && tag !== "a" && !attr.value.trim().startsWith("#")) {
+          if (!["image", "feimage"].includes(tag))
+            fail("SVG references must use local fragment IDs");
+          const source = dataUrl(path, files, attr.value, budget);
+          if (!/^data:image\//i.test(source)) fail("SVG image references must be images");
+          attr.value = source;
+        }
+        if (
+          [
+            "fill",
+            "stroke",
+            "filter",
+            "mask",
+            "clip-path",
+            "marker",
+            "marker-start",
+            "marker-mid",
+            "marker-end",
+            "cursor",
+          ].includes(name)
+        ) {
+          const declaration = postcss.parse(
+            cssInline(path, `value:${attr.value}`, files, budget),
+          ).first;
+          if (declaration?.type !== "decl") fail("Invalid SVG presentation attribute");
+          attr.value = declaration.value;
+        }
+      }
+    }
     if (tag === "script") {
       if (a.get("type")?.trim().toLowerCase() === "module") fail("Module scripts are unsupported");
       if (a.has("src")) {
@@ -451,9 +499,10 @@ export function compileNativeBundle(
   const budget: CompileBudget = { documentBytes: 0, totalBytes: 0 };
   if (entrypoint) {
     const normalizedEntrypoint = safePath(entrypoint);
-    if (/\.mdx?$/i.test(normalizedEntrypoint) || /\.svg$/i.test(normalizedEntrypoint))
-      fail("MDX and SVG entrypoints are unsupported");
+    if (/\.mdx?$/i.test(normalizedEntrypoint)) fail("MDX entrypoints are unsupported");
     if (!files.has(normalizedEntrypoint)) fail("Entrypoint is missing from the bundle");
+    if (/\.svg$/i.test(normalizedEntrypoint))
+      checkAsset(normalizedEntrypoint, files.get(normalizedEntrypoint)!);
   }
   for (const [path, data] of files) {
     if (/\.html?$/i.test(path)) {

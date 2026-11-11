@@ -155,11 +155,12 @@ test("rejects symlinked input paths and children without following them", async 
   await assert.rejects(loadPublishInput(root), /ELOOP|symlink|publish input/i);
 });
 
-test("loads single HTML and raster files, including the trusted macOS /var alias", async () => {
+test("loads single HTML, raster and SVG files, including the trusted macOS /var alias", async () => {
   const directory = await temporaryDirectory();
   for (const [name, contentType] of [
     ["index.html", "text/html; charset=utf-8"],
     ["image.png", "image/png"],
+    ["chart.svg", "image/svg+xml"],
   ]) {
     const path = join(directory, name);
     const bytes = new Uint8Array([0, 1, 127, 255]);

@@ -70,6 +70,7 @@ const fileMime: Record<string, string> = {
   avif: "image/avif",
   bmp: "image/bmp",
   ico: "image/x-icon",
+  svg: "image/svg+xml",
   woff: "font/woff",
   woff2: "font/woff2",
   ttf: "font/ttf",

@@ -7,6 +7,62 @@ import { auth, close, fixture, listen, request } from "./helpers.ts";
 import { NativeStore } from "../../src/native/store.ts";
 import { createNativeApplication } from "../../src/native/router.ts";
 import { authenticateToken } from "../../src/native/auth.ts";
+import { NATIVE_SVG_CSP } from "../../src/native/bundle.ts";
+
+test("standalone SVG renders under a script-free sandbox and downloads retain original bytes", async () => {
+  const f = fixture(),
+    port = await listen(f.app.server);
+  try {
+    const headers = auth(f.token);
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="red"/></svg>';
+    const created = await request(
+      port,
+      "POST",
+      "/api/assets",
+      { ...headers, "content-type": "application/json" },
+      JSON.stringify({ name: "Chart" }),
+    );
+    const id = JSON.parse(created.body).asset.id;
+    const uploaded = await request(
+      port,
+      "PUT",
+      `/api/assets/${id}/files/chart.svg`,
+      { ...headers, "content-length": String(Buffer.byteLength(svg)) },
+      svg,
+    );
+    const finalized = await request(
+      port,
+      "POST",
+      `/api/assets/${id}/finalize`,
+      { ...headers, "content-type": "application/json" },
+      JSON.stringify({ entrypoint: "chart.svg", files: [JSON.parse(uploaded.body).file] }),
+    );
+    assert.equal(finalized.status, 200, finalized.body);
+    for (const prefix of ["/assets", "/preview/assets"]) {
+      const response = await request(port, "GET", `${prefix}/${id}/chart.svg`, headers);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-type"], "image/svg+xml");
+      assert.equal(response.headers["content-security-policy"], NATIVE_SVG_CSP);
+      assert.equal(response.headers["content-disposition"], undefined);
+      assert.equal(response.headers["x-content-type-options"], "nosniff");
+      assert.equal(response.body, svg);
+    }
+    assert.equal(
+      (await request(port, "GET", `/assets/${id}/chart.svg`, { host: "owner.example" })).status,
+      401,
+    );
+    const download = await request(port, "GET", `/api/assets/${id}/download`, headers);
+    assert.equal(download.status, 200);
+    assert.match(
+      download.headers["content-disposition"] as string,
+      /attachment; filename="chart.svg"/,
+    );
+    assert.equal(download.body, svg);
+  } finally {
+    await f.dispose();
+  }
+});
 
 test("direct, latest and preview delivery enforce sandbox headers and selected alias redirects", async () => {
   const f = fixture(),
