@@ -265,6 +265,27 @@ test(
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: temp, XDG_CONFIG_HOME: xdg };
       for (const key of Object.keys(env))
         if (/^(?:CF_ACCESS_|SHLOOK_API_TOKEN_|SHLOOK_INSTANCE$)/.test(key)) delete env[key];
+      for (const args of [[], ["-h"], ["--help"], ["help"], ["publish", "--help"]]) {
+        const help = run(process.execPath, [join(pkg, "dist/cli.js"), ...args], {
+          cwd: temp,
+          env,
+        });
+        assert.match(help, /Usage: shlook <command> \[options\]/);
+        assert.match(help, /npx skills add shanebishop1\/shlook/);
+      }
+      const help = (await cli(pkg, ["--help"], env)) as { help?: string };
+      assert.match(help.help ?? "", /Usage: shlook/);
+      for (const args of [["--unknown"], ["--help=invalid"], ["--", "--help"], ["not-a-command"]]) {
+        const invalid = spawnSync(process.execPath, [join(pkg, "dist/cli.js"), "--json", ...args], {
+          cwd: temp,
+          env,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        assert.equal(invalid.status, 1);
+        assert.equal(invalid.stdout, "");
+        assert.equal(JSON.parse(invalid.stderr).error.code, "usage_error");
+      }
       const keyFile = join(proxyFiles, "key.pem");
       const certFile = join(proxyFiles, "cert.pem");
       writeFileSync(
@@ -414,8 +435,11 @@ test(
       mkdirSync(join(publishDir, "nested"), { recursive: true });
       writeFileSync(
         join(publishDir, "nested", "index.html"),
-        '<!doctype html><h1>Packaged native</h1><link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="image.png">',
+        '<!doctype html><h1>Packaged native</h1><link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="image.png"><svg width="20" height="20"><rect width="20" height="20" fill="red"/></svg><img alt="SVG chart" src="chart.svg">',
       );
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="red"/></svg>';
+      writeFileSync(join(publishDir, "nested", "chart.svg"), svg);
       writeFileSync(join(publishDir, "nested", "app.js"), "document.body.dataset.packaged='yes';");
       writeFileSync(join(publishDir, "nested", "style.css"), "body { color: rgb(1, 2, 3) }");
       writeFileSync(
@@ -479,6 +503,20 @@ test(
       assert.equal(rasterVerification.assetId, raster.asset.id);
       assert.equal(rasterVerification.verified, true);
       assert.equal(rasterVerification.status, 200);
+      const svgFile = join(temp, "standalone.svg");
+      writeFileSync(svgFile, svg);
+      const svgPublication = (await cli(
+        pkg,
+        ["publish", svgFile, "--name", "Standalone SVG", "--instance", "primary"],
+        env,
+      )) as { asset?: { id: string } };
+      assert.ok(svgPublication.asset?.id);
+      const svgVerification = (await cli(
+        pkg,
+        ["verify", svgPublication.asset.id, "--instance", "primary"],
+        env,
+      )) as { verified?: boolean };
+      assert.equal(svgVerification.verified, true);
       const aliasMarkdown = (await cli(
         pkg,
         ["publish", join(publishDir, "notes.md"), "--name", "Alias notes", "--instance", "alias"],
@@ -553,6 +591,19 @@ test(
       const artifact = await page.goto(`${canonical}/assets/${assetId}/`);
       assert.equal(artifact?.status(), 200);
       assert.match(page.url(), new RegExp(`/assets/${assetId}/nested/index.html$`));
+      await page.locator("svg").waitFor({ state: "visible" });
+      assert.equal(
+        await page
+          .getByAltText("SVG chart")
+          .evaluate((image: HTMLImageElement) => image.naturalWidth),
+        120,
+      );
+      const standaloneSvg = await page.goto(
+        `${canonical}/assets/${svgPublication.asset.id}/standalone.svg`,
+      );
+      assert.equal(standaloneSvg?.status(), 200);
+      assert.equal(standaloneSvg?.headers()["content-type"], "image/svg+xml");
+      await page.locator("svg").waitFor({ state: "visible" });
       await browser.close();
       browser = undefined;
 

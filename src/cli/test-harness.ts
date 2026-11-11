@@ -74,6 +74,8 @@ export function harness(overrides: Partial<CliDependencies> = {}) {
         if (
           [
             "--json",
+            "--help",
+            "-h",
             "--plan",
             "--apply",
             "--show-connection-token",
@@ -83,13 +85,15 @@ export function harness(overrides: Partial<CliDependencies> = {}) {
           ].includes(value)
         )
           options[
-            value === "--show-connection-token"
-              ? "showConnectionToken"
-              : value === "--adopt-existing"
-                ? "adoptExisting"
-                : value === "--from-env"
-                  ? "fromEnv"
-                  : value.slice(2)
+            value === "-h"
+              ? "help"
+              : value === "--show-connection-token"
+                ? "showConnectionToken"
+                : value === "--adopt-existing"
+                  ? "adoptExisting"
+                  : value === "--from-env"
+                    ? "fromEnv"
+                    : value.slice(2)
           ] = true;
         else if (
           [

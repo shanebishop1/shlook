@@ -13,6 +13,7 @@ export function parseCliArguments(argv: string[]): {
       allowPositionals: true,
       strict: true,
       options: {
+        help: { type: "boolean", short: "h" },
         json: { type: "boolean" },
         plan: { type: "boolean" },
         apply: { type: "boolean" },
@@ -35,6 +36,7 @@ export function parseCliArguments(argv: string[]): {
     return {
       positionals,
       options: {
+        help: values.help,
         json: values.json,
         plan: values.plan,
         apply: values.apply,

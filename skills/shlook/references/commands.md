@@ -1,5 +1,11 @@
 # Commands
 
+Run `shlook`, `shlook -h`, `shlook --help`, or `shlook help` for usage, available commands,
+and the agent-skill installation link. Help exits successfully without reading credentials or
+contacting an instance. Add `--json` for the normal success envelope with help text in `data.help`.
+`--help` also works after a command (for example, `shlook publish --help`) and shows the same
+overview without running that command.
+
 Named instances:
 
 ```text
@@ -69,6 +75,7 @@ Publish requires a human-readable name of 1-80 characters. The optional descript
 up to 500 characters. Both values are trimmed, stored with the asset, returned by `list` and
 `show`, and displayed and searched in the owner archive.
 
-Publish accepts HTML, raster images, a static directory, or a single Markdown file. It rejects symlinks,
+Publish accepts HTML (including inline SVG), SVG/raster images, audio/video, a static directory,
+or a single Markdown file. It rejects symlinks,
 traversal, non-regular files, missing entrypoints, and more than 500 files. A directory defaults
 to `index.html`; a single file uses its filename.

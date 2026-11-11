@@ -43,7 +43,7 @@ const publishUpload = async () => {
     total = total - only.size + bytes.byteLength;
     if (total > maxTotal) throw new Error('A publication exceeds 100 MiB after Markdown conversion');
     prepared.set(only, { path: only.name + '.html', bytes });
-  } else if (single && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico'].includes(extension)) {
+  } else if (single && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg'].includes(extension)) {
     addIndex(htmlDocument('<img alt="' + escape(only.name) + '" src="' + escape(encodeURIComponent(only.name)) + '">'));
   } else if (single && ['mp3', 'wav', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba'].includes(extension)) {
     addIndex(htmlDocument('<p>' + escape(only.name) + '</p><audio controls preload="metadata" src="' + escape(encodeURIComponent(only.name)) + '"></audio>'));
@@ -69,7 +69,7 @@ const publishUpload = async () => {
       if (typeof uploaded.file?.uploadId !== 'string') throw new Error('Upload response did not include a file ID.');
       manifest.push({ path, uploadId: uploaded.file.uploadId });
     }
-    const entry = manifest.find(item => /^(index|default)\.html?$/i.test(item.path.split('/').at(-1))) || manifest.find(item => /\.html?$/i.test(item.path)) || manifest.find(item => !/\.(?:md|mdx|svg)$/i.test(item.path)) || manifest[0];
+    const entry = manifest.find(item => /^(index|default)\.html?$/i.test(item.path.split('/').at(-1))) || manifest.find(item => /\.html?$/i.test(item.path)) || manifest.find(item => !/\.(?:md|mdx)$/i.test(item.path)) || manifest[0];
     setUploadProgress('Finishing upload...');
     await ownerRequest('/api/assets/' + id + '/finalize', { method: 'POST', body: JSON.stringify({ entrypoint: entry.path, files: manifest }) });
     return { resultUrl: uploadForm.dataset.privateOrigin + '/assets/' + id + '/', resultLabel: 'Private URL ready' };

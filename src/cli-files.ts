@@ -163,6 +163,7 @@ const videoTypes: Record<string, string> = {
 function contentType(path: string): string {
   const extension = extname(path).toLowerCase();
   if ([".html", ".htm"].includes(extension)) return "text/html; charset=utf-8";
+  if (extension === ".svg") return "image/svg+xml";
   if (rasterTypes[extension] !== undefined) return rasterTypes[extension];
   if (audioTypes[extension] !== undefined) return audioTypes[extension];
   if (videoTypes[extension] !== undefined) return videoTypes[extension];
@@ -335,8 +336,11 @@ export async function loadPublishInput(
           : videoTypes[extension] !== undefined
             ? "video"
             : null;
-      if (![".html", ".htm", ".md", ...Object.keys(rasterTypes)].includes(extension) && !media) {
-        throw new Error("single-file publish requires HTML, Markdown, a raster image, or media");
+      if (
+        ![".html", ".htm", ".md", ".svg", ...Object.keys(rasterTypes)].includes(extension) &&
+        !media
+      ) {
+        throw new Error("single-file publish requires HTML, Markdown, an image, or media");
       }
       const entrypoint = media ? "index.html" : extension === ".md" ? `${name}.html` : name;
       if (requestedEntrypoint !== undefined && requestedEntrypoint !== entrypoint) {
