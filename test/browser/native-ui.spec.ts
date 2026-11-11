@@ -707,6 +707,9 @@ test("native UI login, uploads, persistent sessions, revocation, and viewer poli
     const csrf = await page.evaluate(
       async () => (await (await fetch("/api/session")).json()).csrfToken as string,
     );
+    // Initial archive subresources legitimately renew the session. Let them
+    // finish before asserting that the denied requests below do not renew it.
+    await page.waitForLoadState("networkidle");
     const renewedLastSeen = getLastSeen();
     const deniedRequests = await page.evaluate(async (csrfToken) => {
       const bad = await fetch("/api/assets", {
