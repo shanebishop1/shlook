@@ -24,7 +24,8 @@ ticket or grant shlook answers exactly as before (the sign-in page).
    one hour. Validity means:
    - unexpired;
    - for this artifact;
-   - redeemed by a top-level GET navigation with no Origin or Authorization header;
+   - redeemed by a browser's top-level GET navigation (Fetch Metadata `navigate`/`document`) with
+     no Origin or Authorization header;
    - from an active token whose user is enabled.
 4. That cookie, a _grant_, lets the browser read that one artifact's pages (GET or HEAD under
    `/assets/<id>/`). It never reaches the archive, the API, previews, downloads or any other
@@ -41,16 +42,16 @@ cleanup and by `shlook-server cleanup`.
 
 ## Threat model
 
-| Threat                                                                                | Result                                                                                                                                   |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| The long-lived token leaks through a URL, history, Referer, screenshot or shared link | It can't: the token stays on the dashboard's server, and URLs carry only a ticket.                                                       |
-| A ticket is replayed (from history, a proxy log or a copied link)                     | Refused: it was deleted at first use, so the replay gets no cookie.                                                                      |
-| A ticket is used late                                                                 | Refused after 5 minutes.                                                                                                                 |
-| A ticket is used on another artifact                                                  | Refused, and the ticket is burned.                                                                                                       |
-| A ticket is redeemed by a fetch, iframe, HEAD or another site's script                | No grant. Redemption needs a top-level GET navigation without Origin. A refused request does not consume the ticket.                     |
-| A ticket leaks through Referer                                                        | The redemption redirect sends `Referrer-Policy: no-referrer` and the final URL has no ticket. Artifact pages already send `no-referrer`. |
-| A grant cookie is stolen                                                              | It is HttpOnly and Secure, lasts at most an hour, and reads one artifact only. Revoking the token ends it at once.                       |
-| The dashboard is compromised                                                          | The attacker can read the shared library (viewer role) but cannot publish, delete or change expiry. Revoke the token to cut it off.      |
+| Threat                                                                                          | Result                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The long-lived token leaks through a URL, history, Referer, screenshot or shared link           | It can't: the token stays on the dashboard's server, and URLs carry only a ticket.                                                                                                                                                               |
+| A ticket is replayed (from history, a proxy log or a copied link)                               | Refused: it was deleted at first use, so the replay gets no cookie.                                                                                                                                                                              |
+| A ticket is used late                                                                           | Refused after 5 minutes.                                                                                                                                                                                                                         |
+| A ticket is used on another artifact                                                            | Refused, and the ticket is burned.                                                                                                                                                                                                               |
+| A ticket is redeemed by a fetch, iframe, image, HEAD, link-preview bot or another site's script | No grant. Redemption needs a top-level GET navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`) without Origin. A refused request does not consume the ticket. Browsers that send no Fetch Metadata see the sign-in page instead. |
+| A ticket leaks through Referer                                                                  | The redemption redirect sends `Referrer-Policy: no-referrer` and the final URL has no ticket. Artifact pages already send `no-referrer`.                                                                                                         |
+| A grant cookie is stolen                                                                        | It is HttpOnly and Secure, lasts at most an hour, and reads one artifact only. Revoking the token ends it at once.                                                                                                                               |
+| The dashboard is compromised                                                                    | The attacker can read the shared library (viewer role) but cannot publish, delete or change expiry. Revoke the token to cut it off.                                                                                                              |
 
 Grants carry viewer rights even if the minting token is a publisher. Use a dedicated user and a
 viewer token anyway, so the credential can be revoked on its own.

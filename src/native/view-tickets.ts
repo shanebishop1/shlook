@@ -109,11 +109,11 @@ export function issueViewTicket(
   now = Date.now(),
 ) {
   const assetId = viewPathAsset(path);
-  const token = activeToken(store, tokenId, now);
-  if (!token) throw new ViewTicketError(401, "unauthorized");
-  if (!assetLive(store, assetId, now)) throw new ViewTicketError(404, "not_found");
   store.db.exec("BEGIN IMMEDIATE");
   try {
+    const token = activeToken(store, tokenId, now);
+    if (!token) throw new ViewTicketError(401, "unauthorized");
+    if (!assetLive(store, assetId, now)) throw new ViewTicketError(404, "not_found");
     store.db.prepare("DELETE FROM view_tickets WHERE expires_at<=?").run(now);
     const outstanding = store.db
       .prepare("SELECT COUNT(*) AS count FROM view_tickets WHERE token_id=?")
@@ -146,6 +146,9 @@ export function redeemViewTicket(
   now = Date.now(),
 ) {
   if (!TICKET.test(ticket)) return null;
+  // Unknown values never open a write transaction.
+  if (!store.db.prepare("SELECT 1 FROM view_tickets WHERE ticket_hash=?").get(hash(ticket)))
+    return null;
   store.db.exec("BEGIN IMMEDIATE");
   try {
     const row = store.db

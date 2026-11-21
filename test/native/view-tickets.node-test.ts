@@ -181,6 +181,7 @@ test("redemption requires a top-level GET navigation without credentials or Orig
       ["GET", { ...navigation, "sec-fetch-dest": "iframe" }],
       ["GET", { ...navigation, origin: "https://evil.example" }],
       ["GET", { ...navigation, authorization: "Bearer nope" }],
+      ["GET", { host: "owner.example" }],
     ];
     for (const [method, headers] of variants) {
       const issued = await ticketOf(`/assets/${first}/index.html`);

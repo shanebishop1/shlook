@@ -285,10 +285,9 @@ function redeemTicketNavigation(
     tickets.length === 1 &&
     request.headers.authorization === undefined &&
     request.headers.origin === undefined &&
-    (request.headers["sec-fetch-mode"] === undefined ||
-      request.headers["sec-fetch-mode"] === "navigate") &&
-    (request.headers["sec-fetch-dest"] === undefined ||
-      request.headers["sec-fetch-dest"] === "document");
+    // Only a browser's top-level navigation redeems: link unfurlers, frames and image loads don't.
+    request.headers["sec-fetch-mode"] === "navigate" &&
+    request.headers["sec-fetch-dest"] === "document";
   // Tickets are 256-bit random values, so redemption needs no guessing throttle. Keeping it out
   // of the shared sign-in throttle means replayed links can never lock anyone out of sign-in.
   let redeemed: ReturnType<typeof redeemViewTicket> = null;
