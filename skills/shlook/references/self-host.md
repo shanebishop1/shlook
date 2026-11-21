@@ -75,4 +75,6 @@ tar -C "$HOME/.local/share" -czf "$HOME/shlook-backup.tgz" shlook
 
 Keep backups private. Restore the complete directory while stopped, retain owner-only permissions,
 then start and verify. Do not restore SQLite separately from artifact files.
-Token revocation and user disable also invalidate associated browser sessions.
+Token revocation and user disable also invalidate associated browser sessions, view tickets and
+view grants. To let a dashboard open artifacts in browsers without a session, see
+[view tickets](../../../docs/view-tickets.md).

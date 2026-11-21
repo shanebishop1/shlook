@@ -94,6 +94,7 @@ Requires Node.js 24.20+ on macOS or Linux.
 - [Commands](skills/shlook/references/commands.md)
 - [Security](skills/shlook/references/security.md)
 - [Security model and routes](docs/security-model.md)
+- [View tickets for trusted dashboards](docs/view-tickets.md)
 - [Verification](skills/shlook/references/verification.md)
 - [Development](docs/development.md)
 

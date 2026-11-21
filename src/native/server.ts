@@ -12,6 +12,14 @@ import {
 } from "./auth.ts";
 import type { NativeStore, Role } from "./store.ts";
 import { sanitizeReturnPath } from "./login-redirect.ts";
+import {
+  assetIdOf,
+  authenticateGrant,
+  grantCookie,
+  redeemViewTicket,
+  requestGrant,
+  splitTicket,
+} from "./view-tickets.ts";
 
 type Bucket = { started: number; failures: number };
 export class AuthThrottle {
@@ -73,6 +81,7 @@ export class AuthThrottle {
 export type Identity = { user: { id: string; displayName: string }; role: Role; tokenId: string };
 export type BoundaryResult =
   | { identity: Identity; kind: "bearer" | "cookie"; csrfToken?: string; expiresAt?: number }
+  | { identity: Identity; kind: "grant"; assetId: string }
   | { status: number; retryAfter?: number }
   | { kind: "public" | "login" };
 export type AuthorizedBoundary = Extract<BoundaryResult, { identity: Identity }>;
@@ -195,9 +204,17 @@ function boundary(
   if (["/ui/app.js", "/ui/style.css"].includes(path) && request.method === "GET")
     return { kind: "public" };
   const cookie = requestSessionId(request);
-  if (!cookie) return { status: 401 };
-  const session = authenticateSession(store, cookie, now);
-  if (!session) return { status: 401 };
+  const session = cookie ? authenticateSession(store, cookie, now) : null;
+  if (!session) {
+    // A view grant (from a redeemed ticket) reads only the artifact it was issued for.
+    const assetId = assetIdOf(path),
+      grant = requestGrant(request);
+    if (assetId && grant && (request.method === "GET" || request.method === "HEAD")) {
+      const identity = authenticateGrant(store, grant, assetId, now);
+      if (identity) return { identity, kind: "grant", assetId };
+    }
+    return { status: 401 };
+  }
   if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "GET")) {
     if (
       origin !== matched.origin ||
@@ -239,6 +256,72 @@ export function revalidateAuthorizedRequest(
     current.identity.tokenId === original.identity.tokenId &&
     current.identity.role === original.identity.role
   );
+}
+
+/** The configured origin or alias that this request's Host names, if any. */
+export function requestOrigin(request: IncomingMessage, config: NativeConfig): string | null {
+  return matchingOrigin(request.headers.host, config)?.origin ?? null;
+}
+
+/**
+ * Redeems `?shlook_ticket=` on an artifact navigation, then redirects to the same URL without
+ * it. Failure of any kind sets no cookie and still strips the ticket; normal sign-in applies.
+ */
+function redeemTicketNavigation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: NativeStore,
+  matched: MatchedOrigin,
+  throttle: AuthThrottle,
+): boolean {
+  const target = request.url ?? "/";
+  const method = request.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") return false;
+  const { path, tickets, clean } = splitTicket(target);
+  const assetId = assetIdOf(path);
+  if (!assetId || tickets.length === 0) return false;
+  const navigation =
+    method === "GET" &&
+    matched.secure &&
+    tickets.length === 1 &&
+    request.headers.authorization === undefined &&
+    request.headers.origin === undefined &&
+    (request.headers["sec-fetch-mode"] === undefined ||
+      request.headers["sec-fetch-mode"] === "navigate") &&
+    (request.headers["sec-fetch-dest"] === undefined ||
+      request.headers["sec-fetch-dest"] === "document");
+  const peer = request.socket.remoteAddress ?? "unknown";
+  let redeemed: ReturnType<typeof redeemViewTicket> = null;
+  if (navigation) {
+    if (!throttle.allow(peer)) {
+      response.statusCode = 429;
+      response.setHeader("Retry-After", String(throttle.retryAfter(peer)));
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Referrer-Policy", "no-referrer");
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.end();
+      return true;
+    }
+    let ticket = tickets[0]!;
+    try {
+      ticket = decodeURIComponent(ticket);
+    } catch {}
+    redeemed = redeemViewTicket(store, ticket, assetId);
+    if (!redeemed) throttle.fail(peer);
+  }
+  const location = sanitizeReturnPath(clean) === clean ? clean : `/assets/${assetId}/`;
+  response.statusCode = 303;
+  response.setHeader("Location", location);
+  response.setHeader("Cache-Control", "private, no-store");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  if (redeemed)
+    response.setHeader(
+      "Set-Cookie",
+      grantCookie(redeemed.grant, redeemed.assetId, redeemed.expiresAt),
+    );
+  response.end();
+  return true;
 }
 
 export function checkLoginExchange(request: IncomingMessage, config: NativeConfig): boolean {
@@ -288,6 +371,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
         json(response, 400, { error: "bad_request" });
         return;
       }
+      if (redeemTicketNavigation(request, response, options.store, matched, throttle)) return;
       const result = boundary(request, options.store, matched, throttle, Date.now());
       if ("status" in result) {
         if (result.status === 401 && loginRedirectAllowed(request, matched)) {
