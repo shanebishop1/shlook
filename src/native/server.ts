@@ -272,7 +272,6 @@ function redeemTicketNavigation(
   response: ServerResponse,
   store: NativeStore,
   matched: MatchedOrigin,
-  throttle: AuthThrottle,
 ): boolean {
   const target = request.url ?? "/";
   const method = request.method ?? "GET";
@@ -290,24 +289,15 @@ function redeemTicketNavigation(
       request.headers["sec-fetch-mode"] === "navigate") &&
     (request.headers["sec-fetch-dest"] === undefined ||
       request.headers["sec-fetch-dest"] === "document");
-  const peer = request.socket.remoteAddress ?? "unknown";
+  // Tickets are 256-bit random values, so redemption needs no guessing throttle. Keeping it out
+  // of the shared sign-in throttle means replayed links can never lock anyone out of sign-in.
   let redeemed: ReturnType<typeof redeemViewTicket> = null;
   if (navigation) {
-    if (!throttle.allow(peer)) {
-      response.statusCode = 429;
-      response.setHeader("Retry-After", String(throttle.retryAfter(peer)));
-      response.setHeader("Cache-Control", "private, no-store");
-      response.setHeader("Referrer-Policy", "no-referrer");
-      response.setHeader("X-Content-Type-Options", "nosniff");
-      response.end();
-      return true;
-    }
     let ticket = tickets[0]!;
     try {
       ticket = decodeURIComponent(ticket);
     } catch {}
     redeemed = redeemViewTicket(store, ticket, assetId);
-    if (!redeemed) throttle.fail(peer);
   }
   const location = sanitizeReturnPath(clean) === clean ? clean : `/assets/${assetId}/`;
   response.statusCode = 303;
@@ -371,7 +361,7 @@ export function createNativeServer(options: NativeServerOptions): Server {
         json(response, 400, { error: "bad_request" });
         return;
       }
-      if (redeemTicketNavigation(request, response, options.store, matched, throttle)) return;
+      if (redeemTicketNavigation(request, response, options.store, matched)) return;
       const result = boundary(request, options.store, matched, throttle, Date.now());
       if ("status" in result) {
         if (result.status === 401 && loginRedirectAllowed(request, matched)) {

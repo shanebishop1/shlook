@@ -160,6 +160,10 @@ test("replay, expiry, wrong artifact and malformed tickets set no cookie", async
       assert.equal(response.status, 303);
       assert.equal(cookieOf(response), undefined, bad);
     }
+    // Behind a local HTTPS proxy every peer is loopback: replays must not throttle sign-in.
+    for (let index = 0; index < 20; index++)
+      await request(port, "GET", target(once.url), navigation);
+    assert.equal((await request(port, "GET", "/api/me", auth(f.token))).status, 200);
     const clean = await request(port, "GET", `/assets/${first}/index.html`, navigation);
     assert.equal(clean.status, 302, "without a grant the login page applies as before");
     assert.match(clean.headers.location as string, /^\/login\?return=/);
