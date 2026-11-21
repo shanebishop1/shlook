@@ -11,6 +11,7 @@
   "include": [
     "test/browser/native-ui.spec.ts",
     "test/browser/native-markdown-download.spec.ts",
-    "test/browser/native-svg.spec.ts"
+    "test/browser/native-svg.spec.ts",
+    "test/browser/native-view-ticket.spec.ts"
   ]
 }

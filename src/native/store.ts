@@ -135,10 +135,20 @@ export class NativeStore {
       if (!uploadColumns.some(({ name }) => name === "retired_at"))
         this.db.exec("ALTER TABLE asset_uploads ADD COLUMN retired_at INTEGER");
       this.db.exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)");
+      this.db.exec(`CREATE TABLE IF NOT EXISTS view_tickets(
+        ticket_hash TEXT PRIMARY KEY, asset_id TEXT NOT NULL, token_id TEXT NOT NULL REFERENCES tokens(id),
+        user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS view_tickets_token ON view_tickets(token_id);
+      CREATE TABLE IF NOT EXISTS view_grants(
+        grant_hash TEXT PRIMARY KEY, asset_id TEXT NOT NULL, token_id TEXT NOT NULL REFERENCES tokens(id),
+        user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);`);
       const versions = this.db
         .prepare("SELECT version FROM schema_migrations ORDER BY version")
         .all() as Array<{ version: number }>;
-      if (versions.some(({ version }) => ![1, 2, 3, 4].includes(version)))
+      if (versions.some(({ version }) => ![1, 2, 3, 4, 5].includes(version)))
         throw new Error("unsupported schema migration");
       this.db.exec("COMMIT");
       for (const name of ["objects", "staging"]) {
@@ -208,6 +218,8 @@ export class NativeStore {
         .prepare("UPDATE tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL")
         .run(Date.now(), id);
       this.db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
+      this.db.prepare("DELETE FROM view_tickets WHERE user_id=?").run(id);
+      this.db.prepare("DELETE FROM view_grants WHERE user_id=?").run(id);
       this.db.exec("COMMIT");
     } catch (e) {
       this.db.exec("ROLLBACK");
@@ -262,6 +274,8 @@ export class NativeStore {
     try {
       this.db.prepare("UPDATE tokens SET revoked_at=? WHERE id=?").run(Date.now(), id);
       this.db.prepare("DELETE FROM sessions WHERE token_id=?").run(id);
+      this.db.prepare("DELETE FROM view_tickets WHERE token_id=?").run(id);
+      this.db.prepare("DELETE FROM view_grants WHERE token_id=?").run(id);
       this.db.exec("COMMIT");
     } catch (e) {
       this.db.exec("ROLLBACK");

@@ -463,7 +463,7 @@ test("lock recovery is limited to dead owners and failed migration releases it; 
     mkdirSync(broken);
     const db = new DatabaseSync(join(broken, "server.sqlite"));
     db.exec(
-      "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES(5);",
+      "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES(6);",
     );
     db.close();
     assert.throws(() => new NativeStore(broken, true), /unsupported schema/);

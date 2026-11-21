@@ -6,8 +6,16 @@ import {
   type AuthorizedBoundary,
   type Identity,
   type NativeServerOptions,
+  requestOrigin,
   revalidateAuthorizedRequest,
 } from "./server.ts";
+import {
+  TICKET_PARAM,
+  ViewTicketError,
+  assetIdOf,
+  cleanupViewAccess,
+  issueViewTicket,
+} from "./view-tickets.ts";
 import type { NativeConfig } from "./config.ts";
 import type { NativeStore } from "./store.ts";
 
@@ -52,7 +60,8 @@ function parts(url: string | undefined) {
   }
 }
 function fail(response: ServerResponse, error: unknown) {
-  if (error instanceof NativeApiError) json(response, error.status, { error: error.code });
+  if (error instanceof NativeApiError || error instanceof ViewTicketError)
+    json(response, error.status, { error: error.code });
   else json(response, 500, { error: "internal_error" });
 }
 function requireViewer(identity: Identity) {
@@ -119,6 +128,34 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
       method = request.method ?? "GET",
       identity = auth.identity;
     try {
+      if (auth.kind === "grant") {
+        // Defense in depth: the boundary already limits grants to this artifact's reads.
+        if (
+          (method !== "GET" && method !== "HEAD") ||
+          assetIdOf(path) !== auth.assetId ||
+          !path.startsWith("/assets/")
+        )
+          throw new NativeApiError(404, "not_found");
+      }
+      if (path === "/api/view-tickets" && method === "POST") {
+        // Server-to-server only: a trusted holder of an API token mints a ticket for one artifact.
+        if (auth.kind !== "bearer") throw new NativeApiError(403, "forbidden");
+        requireViewer(identity);
+        const input = await bodyJson(request);
+        const origin = requestOrigin(request, options.config);
+        if (!origin) throw new NativeApiError(400, "bad_request");
+        const requested =
+          typeof input === "object" && input !== null && !Array.isArray(input)
+            ? (input as { path?: unknown }).path
+            : undefined;
+        const ticket = issueViewTicket(options.store, identity.tokenId, requested);
+        const target = requested as string;
+        apiResponse(response, 201, {
+          url: `${origin}${target}${target.includes("?") ? "&" : "?"}${TICKET_PARAM}=${ticket.ticket}`,
+          expiresAt: new Date(ticket.expiresAt).toISOString(),
+        });
+        return;
+      }
       const assertFreshAuthorization = freshAuthorizationGuard(
         request,
         options.store,
@@ -296,8 +333,12 @@ export function createNativeApplication(options: NativeApplicationOptions): Nati
     publicHandler,
     throttle: options.throttle,
   });
-  const cleanup = () => assets.cleanup();
+  const cleanup = () => {
+    cleanupViewAccess(options.store);
+    return assets.cleanup();
+  };
   try {
+    cleanupViewAccess(options.store);
     assets.cleanup(Date.now(), options.store.ownsServerLock);
   } catch {
     /* retry through explicit/hourly cleanup */

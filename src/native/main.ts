@@ -8,6 +8,7 @@ import { initConfig, loadConfig, type NativeConfig } from "./config.ts";
 import { createNativeApplication } from "./router.ts";
 import { listenLoopback } from "./server.ts";
 import { NativeStore } from "./store.ts";
+import { cleanupViewAccess } from "./view-tickets.ts";
 
 type Parsed = { positional: string[]; flags: Map<string, string[]> };
 
@@ -257,7 +258,12 @@ export async function run(args: string[]): Promise<void> {
   if (command === "cleanup") {
     const o = options(parsed, ["data-dir"]);
     if (parsed.positional.length) throw new Error("unexpected arguments");
-    print(withStore(dataDir(o), (store) => new NativeAssetService(store).cleanup()));
+    print(
+      withStore(dataDir(o), (store) => {
+        cleanupViewAccess(store);
+        return new NativeAssetService(store).cleanup();
+      }),
+    );
     return;
   }
   throw new Error("unknown command");

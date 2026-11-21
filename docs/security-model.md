@@ -65,6 +65,10 @@ Users share a private library: viewers read, publishers modify. Uploads render o
 opaque-sandboxed documents. See [security](../skills/shlook/references/security.md) for session,
 CSRF, and isolation constraints, and [self-hosting](../skills/shlook/references/self-host.md) for setup.
 
+A trusted server holding a viewer token can mint single-use, five-minute view tickets for one
+artifact, so a browser without a session can open it; see [view tickets](view-tickets.md) for the
+flow, lifetimes and threat model.
+
 Native document CSP and archive preview iframes permit downloads, including client-generated
 Markdown exports. This does not grant same-origin access, popups, or top-level navigation;
 native connection, form, and nested-frame restrictions remain unchanged. Downloads are
