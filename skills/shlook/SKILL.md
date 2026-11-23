@@ -16,6 +16,22 @@ shlook verify <asset-id> --instance home --json
 Private by default; public sharing requires explicit approval. Never put credentials in argv,
 URLs, chat, or logs. Obtain approval before provisioning infrastructure.
 
+## Publishing a report
+
+Never publish raw Markdown for a person to read. Render it, then publish the output directory:
+
+```bash
+python3 assets/report/render.py report.md ./report-out
+shlook publish ./report-out --name "Report title" --instance home --json
+```
+
+`render.py` is Python 3 standard-library only and writes `./report-out/index.html` from
+`assets/report/report.html`: light and dark themes, a 52rem measure, styled tables with a sticky
+header, soft code blocks, and print styles. It supports headings, paragraphs, emphasis, inline and
+fenced code, nested lists, tables, blockquotes, links, and horizontal rules, and escapes source
+HTML. Optional front matter sets `title`, `eyebrow`, and `date`; `--title`, `--eyebrow`, and
+`--date` override it.
+
 Read only what the task needs:
 
 | Task                              | Reference                                                                       |
