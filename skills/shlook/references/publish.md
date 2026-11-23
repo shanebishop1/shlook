@@ -5,8 +5,17 @@ shlook publish ./artifact --name "Review" --instance home --json
 shlook verify <asset-id> --instance home --json
 ```
 
+Reports for people: render the Markdown first, then publish the directory.
+
+```bash
+python3 assets/report/render.py report.md ./report-out
+shlook publish ./report-out --name "Report title" --instance home --json
+```
+
 - Inputs: HTML, SVG or raster images, audio/video, static directories, or a single `.md` file.
   Directories default to `index.html`. Inline SVG charts in HTML are supported; no PNG conversion is needed.
+- The report template (`assets/report/`) turns Markdown into a styled page with a document header,
+  tables, dark mode, and print styles. Use it instead of publishing `.md` for a person to read.
 - Markdown supports headings, paragraphs, lists, and fenced code. Raw HTML is escaped;
   links/images stay text. Directory Markdown stays text; no MDX.
 - Native bundles embed local classic JS/CSS, SVG/raster images, media, and fonts in sandboxed HTML.
